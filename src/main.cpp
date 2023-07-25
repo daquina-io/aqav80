@@ -164,18 +164,13 @@ void createDataFrame(){
   t;
 
   // Usar esquema de ioticos para almacenar datos en json
+  // https://github.com/ioticos/ioticos_god_level_esp32/blob/master/src/main.cpp
 }
 void sendDataFrame(){
   createDataFrame();
 
   // Enviar via mqtt como lo hace ioticos
-  // sprintf(
-  //         row,
-  //         "%s,id=%s lat=%s,lng=%s,t=%u,h=%u,pm1=%u,pm25=%u,pm10=%u,s=%u",
-  //         SENSOR_ID,SENSOR_ID,FIXED_LAT,FIXED_LON,t,h,apm1,apm25,apm10,amic
-  //         );
-  // DMSGln(row);
-  // influx.write(row);
+  // https://github.com/ioticos/ioticos_god_level_esp32/blob/master/src/main.cpp
   DMSGln("Enviando datos");
 }
 Task sendDataFrameTask(15000, TASK_FOREVER, &sendDataFrame);
