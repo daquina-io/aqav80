@@ -5,21 +5,25 @@ using namespace std;
 #include <vector>
 #include <numeric>
 #include <WiFi.h>
+#include <HTTPClient.h>
 #include "HardwareSerial.h"
 #include <Adafruit_Sensor.h>
 #include <DHT.h>
 #include <DHT_U.h>
 #include <FastLED.h>
+#include <SoftwareSerial.h>
 #include <PMS.h>
 #include <TaskScheduler.h>
 #include <MHZ19.h>
+#include <ArduinoJson.h>
+#include <PubSubClient.h>
 
 #define SENSOR_ID "v80_aprendiedo"
 
-#define FIXED_LAT "6.256984"
-#define FIXED_LON "-75.578214"
+#define FIXED_LAT "6.286984"
+#define FIXED_LON "-75.508214"
 
-#define DEBUGGING
+//#define DEBUGGING
 
 #ifdef  DEBUGGING
 #define DMSG(args...)     Serial.print(args)
@@ -32,8 +36,12 @@ using namespace std;
 #endif
 
 //WiFi
-const char *wifi_ssid = "HOME-4E05";
-const char *wifi_password = "BDFBC14F7BC4E656";
+const char *wifi_ssid = "network_name";
+const char *wifi_password = "password";
+
+WiFiClient espclient;
+PubSubClient client(espclient);
+DynamicJsonDocument mqtt_data_doc(2048);
 
 vector<unsigned int> v25;      // for average
 vector<unsigned int> vsound;      // for average
@@ -49,7 +57,7 @@ unsigned short int t = 0;
 bool ledToggle = false;
 
 // DHT21
-#define DHTTYPE DHT21       // DHT 22  (AM2302), AM2321 
+#define DHTTYPE DHT11       // DHT 22  (AM2302), AM2321 
 #define DHTPIN GPIO_NUM_13  // Digital pin connected to the DHT sensor
 DHT dht(DHTPIN, DHTTYPE);
 // SOUND
@@ -57,14 +65,16 @@ DHT dht(DHTPIN, DHTTYPE);
 const int sampleWindow = 50; // Sample window width in mS (50 mS = 20Hz)
 unsigned int sample;
 // PLANTOWER
-// HardwareSerial Serial0 -> plantower_serial;
-HardwareSerial plantower_serial(1);
+// HardwareSerial plantower_serial(1);
+#define P_TOWER_TX GPIO_NUM_14
+#define P_TOWER_RX GPIO_NUM_34
+SoftwareSerial plantower_serial(P_TOWER_TX, P_TOWER_RX);
 PMS pms(plantower_serial);
 PMS::DATA data;
-#define P_TOWER_TX GPIO_NUM_25
+
 
 // MHZ19
-#define MHZ_TX GPIO_NUM_14
+#define MHZ_TX GPIO_NUM_16
 #define MHZ_RX GPIO_NUM_17
 #define BAUDRATE 9600
 // HardwareSerial Serial1 -> mhz_serial;
@@ -73,6 +83,11 @@ MHZ19 myMHZ19;
 
 // TaskScheduler
 Scheduler runner;
+#define SOUND_SAMPLE_TIME 120
+#define PM_SAMPLE_TIME 400
+#define CO2_SAMPLE_TIME 2000
+#define HT_SAMPLE_TIME 15000
+#define SEND_DATA_TIME 15000
 
 // TASKS
 unsigned short int getSoundSamplesAverage(){
@@ -104,11 +119,12 @@ void soundSample(){
   peakToPeak = signalMax - signalMin;  // max - min = peak-peak amplitude
     // tomado de https://forum.arduino.cc/t/map-but-log/379910/3
   int logmaplv = log(peakToPeak + 1) / log(900) * 9;
-  DMSGln(logmaplv);
-  // saveMicDataForAverage(peakToPeak*0.07447 + 39.82947);
-  vsound.push_back(logmaplv);
+  // DMSGln(logmaplv);
+  DMSGln(peakToPeak);
+  // vsound.push_back(logmaplv);
+  vsound.push_back(peakToPeak);
 }
-Task soundSampleTask(120, TASK_FOREVER, &soundSample);
+Task soundSampleTask(SOUND_SAMPLE_TIME, TASK_FOREVER, &soundSample);
 
 unsigned short int getPmSamplesAverage(){
   unsigned short int pm25_average = accumulate( v25.begin(), v25.end(), 0.0)/v25.size();
@@ -116,13 +132,14 @@ unsigned short int getPmSamplesAverage(){
   return pm25_average;
 }
 void pmSample(){
-  DMSGln("Leyendo PM ... ");
+  DMSG("Leyendo PM ... ");
   if (pms.readUntil(data)) {
     v25.push_back(data.PM_AE_UG_2_5);
+    DMSGln(data.PM_AE_UG_2_5);
   }
   else DMSGln("No data.");
 }
-Task pmSampleTask(400, TASK_FOREVER, &pmSample);
+Task pmSampleTask(PM_SAMPLE_TIME, TASK_FOREVER, &pmSample);
 
 unsigned short int getCo2SamplesAverage(){
   unsigned short int co2_average = accumulate( vco2.begin(), vco2.end(), 0.0)/vco2.size();
@@ -135,18 +152,18 @@ void co2Sample(){
   usual documented command with getCO2(false) */
 
   int CO2;
-  // CO2 = myMHZ19.getCO2();
+  CO2 = myMHZ19.getCO2();
   vco2.push_back(CO2);                             // Request CO2 (as ppm)
   
   DMSG("CO2 (ppm): ");                      
   DMSGln(CO2);                                
 
   int8_t Temp;
-  // Temp = myMHZ19.getTemperature();                     // Request Temperature (as Celsius)
+  Temp = myMHZ19.getTemperature();                     // Request Temperature (as Celsius)
   DMSG("Temperature (C): ");                  
   DMSGln(Temp);     
 }
-Task co2SampleTask(2000, TASK_FOREVER, &co2Sample);
+Task co2SampleTask(CO2_SAMPLE_TIME, TASK_FOREVER, &co2Sample);
 
 void htSample(){
   h = dht.readHumidity();
@@ -155,13 +172,20 @@ void htSample(){
   DMSG("Temperature ");DMSGln(t);
   DMSG("Humidity ");DMSGln(h);
 }
-Task htSampleTask(15000, TASK_FOREVER, &htSample);
+Task htSampleTask(HT_SAMPLE_TIME, TASK_FOREVER, &htSample);
+
 void createDataFrame(){
   avg_sound = getSoundSamplesAverage();
-  avg_pm25 = getPmSamplesAverage();
   avg_co2 = getCo2SamplesAverage();
+  avg_pm25 = getPmSamplesAverage();
   h;
   t;
+
+  mqtt_data_doc["variables"][0]["sound"]["value"] = avg_sound;
+  mqtt_data_doc["variables"][1]["co2"]["value"] = avg_co2;
+  mqtt_data_doc["variables"][2]["pm25"]["value"] = avg_pm25;
+  mqtt_data_doc["variables"][3]["humidity"]["value"] = h;
+  mqtt_data_doc["variables"][4]["temperature"]["value"] = t;
 
   // Usar esquema de ioticos para almacenar datos en json
   // https://github.com/ioticos/ioticos_god_level_esp32/blob/master/src/main.cpp
@@ -169,11 +193,16 @@ void createDataFrame(){
 void sendDataFrame(){
   createDataFrame();
 
+  String toSend = "";
+
+  serializeJson(mqtt_data_doc, toSend);
+  Serial.println(toSend);
+
   // Enviar via mqtt como lo hace ioticos
   // https://github.com/ioticos/ioticos_god_level_esp32/blob/master/src/main.cpp
   DMSGln("Enviando datos");
 }
-Task sendDataFrameTask(15000, TASK_FOREVER, &sendDataFrame);
+Task sendDataFrameTask(SEND_DATA_TIME, TASK_FOREVER, &sendDataFrame);
 
 // FUNCTION SIGNATURES
 void connectToWifi();
@@ -183,28 +212,28 @@ void setup(){
   Serial.begin(115200);
   connectToWifi();
   
-  // pms.wakeUp();
-  // plantower_serial.begin(9600);
+  pms.wakeUp();
+  plantower_serial.begin(9600);
   
   dht.begin();
 
-  // mhz_serial.begin(9600);
-  // myMHZ19.begin(mhz_serial);
-  // myMHZ19.autoCalibration(); 
+  mhz_serial.begin(9600);
+  myMHZ19.begin(mhz_serial);
+  myMHZ19.autoCalibration(); 
 
   // setup time
   runner.init();
   //DMSGln("Initialized scheduler");
   runner.addTask(soundSampleTask);
-  //runner.addTask(pmSampleTask);
+  runner.addTask(pmSampleTask);
   runner.addTask(htSampleTask);
-  //runner.addTask(co2SampleTask);
+  runner.addTask(co2SampleTask);
   runner.addTask(sendDataFrameTask);
   //DMSGln("added tasks");
   soundSampleTask.enable();
-  //pmSampleTask.enable();
+  pmSampleTask.enable();
   htSampleTask.enable();
-  //co2SampleTask.enable();
+  co2SampleTask.enable();
   sendDataFrameTask.enable();
 }
 
