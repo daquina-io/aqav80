@@ -1,5 +1,6 @@
 using namespace std;
 #include <Arduino.h>
+#include <WiFiManager.h>
 #include "Colors.h"
 #include "IoTicosSplitter.h"
 #include <vector>
@@ -35,9 +36,14 @@ using namespace std;
 #define DMSGln(str)
 #endif
 
+// FUNCTION SIGNATURES
+//void connectToWifi();
+void conexion();
+int counter = 0;
+
 //WiFi
-const char *wifi_ssid = "network_name";
-const char *wifi_password = "password";
+//const char *wifi_ssid = "Daniel";
+//const char *wifi_password = "24752475";
 
 WiFiClient espclient;
 PubSubClient client(espclient);
@@ -57,7 +63,7 @@ unsigned short int t = 0;
 bool ledToggle = false;
 
 // DHT21
-#define DHTTYPE DHT11       // DHT 22  (AM2302), AM2321 
+#define DHTTYPE DHT22       // DHT 22  (AM2302), AM2321 
 #define DHTPIN GPIO_NUM_13  // Digital pin connected to the DHT sensor
 DHT dht(DHTPIN, DHTTYPE);
 // SOUND
@@ -175,6 +181,7 @@ void htSample(){
 Task htSampleTask(HT_SAMPLE_TIME, TASK_FOREVER, &htSample);
 
 void createDataFrame(){
+  conexion();
   avg_sound = getSoundSamplesAverage();
   avg_co2 = getCo2SamplesAverage();
   avg_pm25 = getPmSamplesAverage();
@@ -190,13 +197,87 @@ void createDataFrame(){
   // Usar esquema de ioticos para almacenar datos en json
   // https://github.com/ioticos/ioticos_god_level_esp32/blob/master/src/main.cpp
 }
+
+// MQTT Broker
+
+
+const char *mqtt_broker = "54.193.43.191";// broker address
+const char *topic = "datos/sensor"; // define topic 
+const char *temperatura = "datos/temperatura"; // define topic 
+const char *humedad = "datos/humedad"; // define topic 
+const char *aire = "datos/aire"; // define topic 
+const char *sonido = "datos/sonido"; // define topic 
+const char *co2 = "datos/co2"; // define topic 
+const char *estado_on = "datos/on"; // define topic 
+const char *estado_off = "datos/off"; // define topic 
+
+const char *mqtt_username = ""; // username for authentication
+const char *mqtt_password = "";// password for authentication
+const int mqtt_port = 1883;// port of MQTT over TCP
+
 void sendDataFrame(){
   createDataFrame();
 
-  String toSend = "";
+ // String toSend = "";
+  char toSend[200];
+  char tmp    [3];
+  char hum    [50];
+  char sonid [50];
+  char co_2    [50];
+  char pm25   [50];
+  char estad_on   [4] = "on";
+  char estad_off   [5] = "off";
+//**************************************************************************************
+//  ENVIA EL JSON COMPLETO
+//**************************************************************************************
+  // serializeJson(mqtt_data_doc, toSend);
+  // Serial.println(toSend);
+  //  client.publish(topic, toSend);
+  //  client.subscribe(topic);
+//**************************************************************************************
+  //  Serial.print("temperatura:");
+  //  Serial.println(t);
+  // sprintf(mensaje, "Temperatura: %.2f. Humedad: %.2f", t, h);
+  // client.publish("datos/sensor", mensaje);
+//**************************************************************************************
+//  ENVIA LA TEMPERATURA
+//**************************************************************************************
+   snprintf (tmp, sizeof(tmp), "%ld", t);
+   client.publish(temperatura,  tmp); // topico, variable char
+// //**************************************************************************************
+// //  ENVIA LA HUMERDAD
+// //**************************************************************************************
+   snprintf (hum, sizeof(hum), " %ld", h);
+   client.publish(humedad,  hum);
+//**************************************************************************************
+//  ENVIA LA SONIDO
+//**************************************************************************************
+   snprintf (sonid, sizeof(sonid), " %ld", avg_sound);
+   client.publish(sonido,  sonid);
+// //**************************************************************************************
+// //  ENVIA LA CALIDAD DEL AIRE
+// //**************************************************************************************
+   snprintf (pm25, sizeof(pm25), " %ld", avg_pm25);
+   client.publish(aire,  pm25);
+// //**************************************************************************************
+// //  ENVIA LA CO2
+// //**************************************************************************************
+   snprintf (co_2, sizeof(co_2), " %ld", avg_co2);
+   client.publish(co2,  co_2);
 
-  serializeJson(mqtt_data_doc, toSend);
-  Serial.println(toSend);
+// //**************************************************************************************
+// //  ENVIA EL ESTADO DEL DISPOSITIVO PARA VER SI ESTA EN LINEA
+// //**************************************************************************************
+
+  // snprintf (estad_on, sizeof(estad_on), " %ld", estad_on);
+  // client.publish(estado_on,  estad_on);
+
+//**************************************************************************************
+//  ENVIA EL ESTADO DEL DISPOSITIVO PARA VER SI ESTA APAGADO
+//**************************************************************************************
+
+ //  snprintf (estad_off, sizeof(estad_off), " %ld", estad_off);
+ //  client.publish(estado_off,  estad_off);
 
   // Enviar via mqtt como lo hace ioticos
   // https://github.com/ioticos/ioticos_god_level_esp32/blob/master/src/main.cpp
@@ -204,13 +285,77 @@ void sendDataFrame(){
 }
 Task sendDataFrameTask(SEND_DATA_TIME, TASK_FOREVER, &sendDataFrame);
 
-// FUNCTION SIGNATURES
-void connectToWifi();
+
+
+//*********************************************************************************
+// implementacion de codigo para recibir datos MQTT UBER
+//*********************************************************************************
+
+
+
+
+void callback(char *topic, byte *payload, unsigned int length) {
+ Serial.print("Mensaje recibido en topic: ");
+ Serial.println(topic);
+ Serial.print("Mensaje:");
+ for (int i = 0; i < length; i++) {
+     Serial.print((char) payload[i]);
+ }
+ Serial.println();
+ Serial.println("-----------------------");
+}
+
+//**********************************************************************************
 
 void setup(){
 
   Serial.begin(115200);
-  connectToWifi();
+// *********************************************************************************
+// AQUI VA EL CODIGO DE LA CONEXION WIFIMANAGER
+// *********************************************************************************
+
+    WiFi.mode(WIFI_STA); // modo establecido explícitamente, especialmente el valor predeterminado es STA+AP
+
+    Serial.begin(115200);
+    pinMode(LED_BUILTIN, OUTPUT);
+    digitalWrite(LED_BUILTIN, HIGH);
+    
+    WiFiManager wiFiManager;
+
+    // restablecer la configuración: borrar las credenciales almacenadas para realizar pruebas
+   // wiFiManager.resetSettings();
+     
+    //Tiempo de espera del portal de configuración
+    //Si necesita establecer un tiempo de espera para que el ESP no se bloquee esperando 
+    //a ser configurado, por ejemplo después de un corte de energía, puede agregar
+    wiFiManager.setConfigPortalTimeout(180);
+
+
+     // Conéctate automáticamente usando las credenciales guardadas,
+     // si la conexión falla, inicia un punto de acceso con el nombre especificado ("Sensores"),
+     // si está vacío se generará automáticamente el SSID, si la contraseña está en blanco será un AP anónimo (wiFiManager.autoConnect())
+     // luego entra en un bucle de bloqueo en espera de configuración y devolverá un resultado exitoso
+
+    bool res;
+    // res = wiFiManager.autoConnect(); // auto generated AP name from chipid
+    // res = wiFiManager.autoConnect("AutoConnectAP"); // anonymous ap
+    res = wiFiManager.autoConnect("Sensores","24752475"); // password protected ap
+
+    if(!res) {
+        Serial.println("Failed to connect!");
+        // ESP.restart();
+       // wiFiManager.setConfigPortalTimeout(180);
+
+    } 
+    else {
+        Serial.println("Connected :)");
+        
+        Serial.println("IP address: ");
+        Serial.println(WiFi.localIP());   
+    }
+
+// *********************************************************************************
+  //connectToWifi();
   
   pms.wakeUp();
   plantower_serial.begin(9600);
@@ -235,19 +380,39 @@ void setup(){
   htSampleTask.enable();
   co2SampleTask.enable();
   sendDataFrameTask.enable();
+
+
+ //conectando a mqtt broker
+ client.setServer(mqtt_broker, mqtt_port);
+ client.setCallback(callback);
+ while (!client.connected()) {
+     String client_id = "esp32-client-";
+     client_id += String(WiFi.macAddress());
+     Serial.printf("The client %s connects to the public mqtt broker\n", client_id.c_str());
+     if (client.connect(client_id.c_str(), mqtt_username, mqtt_password)) {
+         Serial.println("Public emqx mqtt broker connected");
+     } else {
+         Serial.print("failed with state ");
+         Serial.print(client.state());
+         delay(2000);
+     }
+ }
+ // publish and subscribe
+ client.publish(topic, "Hola soy el Esp32 conectado");
+ client.subscribe(topic);
+
+
 }
 
 void loop(){
   runner.execute(); 
+  conexion();
+  client.loop();
+
 }
 
-// CALLBACKS
-void connectToWifi(){
-  Serial.print(underlinePurple + "\n\n\nWiFi Connection in Progress" + fontReset + Purple);
-
-  WiFi.begin(wifi_ssid, wifi_password);
-
-  int counter = 0;
+void conexion()
+{
 
   while (WiFi.status() != WL_CONNECTED)
   {
@@ -255,154 +420,14 @@ void connectToWifi(){
     Serial.print(".");
     counter++;
 
-    if (counter > 10)
+    if (counter > 20)
     {
       Serial.print("  ⤵" + fontReset);
-      Serial.print(Red + "\n\n         Ups WiFi Connection Failed :( ");
+      Serial.print(Red + "\n\n         Fallo la conexion Wifi :( ");
       Serial.println(" -> Restarting..." + fontReset);
       delay(2000);
       ESP.restart();
     }
-  }
+  } 
 
-  Serial.print("  ⤵" + fontReset);
-
-  //Printing local ip
-  Serial.println(boldGreen + "\n\n         WiFi Connection -> SUCCESS :)" + fontReset);
-  Serial.print("\n         Local IP -> ");
-  Serial.print(boldBlue);
-  Serial.print(WiFi.localIP());
-  Serial.println(fontReset);
-  
 }
-
-// #ifdef LED
-// #ifdef LED_CODE
-// CRGB setColor() {
-//   CRGB alert = CRGB::Black;
-//   if(apm25 < 12){
-//       int color=255*apm25/12;
-//       alert = CRGB(0,color,0);
-//    }
-//   if(apm25 >= 12 && apm25 < 35) {
-//       int color=255*apm25/35;
-//       alert = CRGB(255,color,0);
-//     }
-//   if(apm25 >= 35 && apm25 < 55) {
-//       int color=150*apm25/55;
-//       alert = CRGB(255,color,0);
-//     }
-//   if(apm25 >= 55 && apm25 < 75) {
-//       int color=255*apm25/75;
-//       alert = CRGB(color,0,0);
-//   }
-//   if(apm25 >= 75 && apm25 < 255)  {
-//       int color=180*apm25/255;
-//       alert = CRGB(175,0,color);
-//   }
-//   if(apm25 >= 255) alert = CRGB::Brown; // Alert.harmful;
-//   return alert;
-//   FastLED.setBrightness(millis() % 255);
-//   FastLED.delay(10);
-//   FastLED.show();
-//   FastLED.delay(DELAYTIME);
-// }
-// #else
-// CRGB setColor(){
-//   CRGB alert = CRGB::Black;
-//   if(apm25 < 12) alert = CRGB::Green; // CRGB::Green; // Alert.ok
-//   if(apm25 >= 12 && apm25 < 35) alert = CRGB::Gold; // Alert.notGood;
-//   if(apm25 >= 35 && apm25 < 55) alert = CRGB::Tomato; // Alert.bad;
-//   if(apm25 >= 55 && apm25 < 150) alert = CRGB::DarkRed; // CRGB::Red; // Alert.dangerous;
-//   if(apm25 >= 150 && apm25 < 255) alert = CRGB::Purple; // CRGB::Purple; // Alert.VeryDangerous;
-//   if(apm25 >= 255) alert = CRGB::Brown; // Alert.harmful;
-//   return alert;
-
-// }
-// #endif
-// void setLed(){
-//   ledToggle = !ledToggle;
-//     for(int i=0; i < 4; i++) {
-//     for(int j=0; j < NUM_LEDS; j++) leds[j] = ledToggle ? setColor() : CRGB::Black;
-//       FastLED.show();
-//   }
-// }
-// #endif
-
-// #ifdef LED
-// Task ledBlink(1000, TASK_FOREVER, &setLed);
-// #endif
-
-// #ifdef APP
-// void printLEDColor(){
-//   if(apm25 < 12)DMSGln("verde");
-//   if(apm25 >= 12 && apm25 < 35)DMSGln("amarillo");
-//   if(apm25 >= 35 && apm25 < 55)DMSGln("naranja");
-//   if(apm25 >= 55 && apm25 < 150)DMSGln("rojo");
-//   if(apm25 >= 150 && apm25 < 255)DMSGln("morado");
-//   if(apm25 >= 255)DMSGln("cafe");
-// }
-// #endif
-
-//  #ifdef LED
-//   FastLED.setBrightness(BRIGHTNESS);
-//   LEDS.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS);
-//   #endif
- 
-//  #ifdef LED
-//   runner.addTask(ledBlink);
-//   ledBlink.enable();
-//   #endif
-
-// // LED
-// #ifdef LED
-// #define LED_PIN D1
-// #define LED_TYPE WS2812B
-// #define COLOR_ORDER GRB
-// #define NUM_LEDS 64
-// CRGB leds[NUM_LEDS];
-// int BRIGHTNESS = 10; // this is half brightness
-// #ifdef LED_CODE
-// #define DELAYTIME 150
-// #endif
-// #endif
-
-//
-// ERRORS
-//
-
-// rst:0x8 (TG1WDT_SYS_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
-  // configsip: 0, SPIWP:0xee
-  // clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
-  // mode:DIO, clock div:1
-  // load:0x3fff0030,len:1344
-  // load:0x40078000,len:13924
-  // ho 0 tail 12 room 4
-  // load:0x40080400,len:3600
-  // entry 0x400805f0
-  // ets Jun  8 2016 00:22:57
-
-  // Rebooting...
-  // ets Jun  8 2016 00:22:57
-
-  // rst:0xc (SW_CPU_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)
-  // configsip: 0, SPIWP:0xee
-  // clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
-  // mode:DIO, clock div:1
-  // load:0x3fff0030,len:1344
-  // load:0x40078000,len:13924
-  // ho 0 tail 12 room 4
-  // load:0x40080400,len:3600
-  // entry 0x400805f0
-  // Guru Meditation Error: Core  1 panic'ed (LoadProhibited). Exception was unhandled.
-
-  // Core  1 register dump:
-  // PC      : 0x400d215c  PS      : 0x00060c30  A0      : 0x800d2386  A1      : 0x3ffb21b0  
-  // A2      : 0x3ffc257c  A3      : 0x3ffc258e  A4      : 0x00000000  A5      : 0x3ffc2ca4  
-  // A6      : 0x3ffc258e  A7      : 0x00060c23  A8      : 0x00000000  A9      : 0x3ffb2190  
-  // A10     : 0x00000000  A11     : 0x3ffb21ab  A12     : 0x00000009  A13     : 0x3ffc2596  
-  // A14     : 0x0000007a  A15     : 0x00000000  SAR     : 0x00000008  EXCCAUSE: 0x0000001c  
-  // EXCVADDR: 0x00000000  LBEG    : 0x40085d51  LEND    : 0x40085d73  LCOUNT  : 0xffffffff  
-
-  // Backtrace: 0x400d2159:0x3ffb21b0 0x400d2383:0x3ffb21d0 0x400d2440:0x3ffb21f0 0x400d1cd1:0x3ffb2210 0x400d193f:0x3ffb2250 0x400d1b3a:0x3ffb2270 0x400d474d:0x3ffb2290
-  // ELF file SHA256: e7f09e1f7105c62d
