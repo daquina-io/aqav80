@@ -20,9 +20,6 @@ using namespace std;
 #include <PubSubClient.h>
 #include "variables.h"
 
-
-
-
 //#define DEBUGGING
 
 #ifdef  DEBUGGING
@@ -37,10 +34,10 @@ using namespace std;
 
 // FUNCTION SIGNATURES
 //void connectToWifi();
+
+
 void conexion();
 int counter = 0;
-
-
 
 WiFiClient espclient;
 PubSubClient client(espclient);
