@@ -1,6 +1,5 @@
 .pio
 .clang_complete
 wifi_credentials.txt
-
-.vscode
+.vscode/*
 src/variables.h
