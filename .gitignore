@@ -3,3 +3,4 @@
 wifi_credentials.txt
 .vscode/*
 src/variables.h
+SenPork_infraestructure/senpork.env

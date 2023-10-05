@@ -20,9 +20,6 @@ using namespace std;
 #include <PubSubClient.h>
 #include "variables.h"
 
-
-
-
 //#define DEBUGGING
 
 #ifdef  DEBUGGING
@@ -37,10 +34,10 @@ using namespace std;
 
 // FUNCTION SIGNATURES
 //void connectToWifi();
+
+
 void conexion();
 int counter = 0;
-
-
 
 WiFiClient espclient;
 PubSubClient client(espclient);
@@ -60,7 +57,7 @@ unsigned short int t = 0;
 bool ledToggle = false;
 
 // DHT21
-#define DHTTYPE DHT22       // DHT 22  (AM2302), AM2321 
+#define DHTTYPE DHT11       // DHT 22  (AM2302), AM2321 
 #define DHTPIN GPIO_NUM_13  // Digital pin connected to the DHT sensor
 DHT dht(DHTPIN, DHTTYPE);
 // SOUND
@@ -104,7 +101,7 @@ void soundSample(){
   unsigned int peakToPeak = 0;   // peak-to-peak level
 
   unsigned int signalMax = 0;
-  unsigned int signalMin = 1024;
+  unsigned int signalMin = 4095; // La resolución del ADC en el esp32 es mayor (12bits) 4095
 
   // collect data for 50 mS
   while (millis() - startMillis < sampleWindow)
@@ -196,10 +193,6 @@ void createDataFrame(){
 }
 
 // MQTT Broker
-
-
-
-
 void sendDataFrame(){
   createDataFrame();
 
@@ -270,14 +263,9 @@ void sendDataFrame(){
 }
 Task sendDataFrameTask(SEND_DATA_TIME, TASK_FOREVER, &sendDataFrame);
 
-
-
 //*********************************************************************************
 // implementacion de codigo para recibir datos MQTT UBER
 //*********************************************************************************
-
-
-
 
 void callback(char *topic, byte *payload, unsigned int length) {
  Serial.print("Mensaje recibido en topic: ");
