@@ -1,5 +1,10 @@
 const char *mqtt_broker = "iot.unloquer.org";// broker address
-const char *topic = "datos/sensor"; // define topic 
+// TOPIC {tipo_de_mensaje}/{ubicacion}/{sensor_id}
+// tipo_de_mensaje [telemetry, command, status]
+// ubicacion [geohash]
+// sensor_id [uuid]
+const char *topic = "tele/ubicacion/sensor1"; // define topic 
+
 const char *temperatura = "datos/temperatura"; // define topic 
 const char *humedad = "datos/humedad"; // define topic 
 const char *aire = "datos/aire"; // define topic 

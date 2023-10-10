@@ -182,11 +182,11 @@ void createDataFrame(){
   h;
   t;
 
-  mqtt_data_doc["variables"][0]["sound"]["value"] = avg_sound;
-  mqtt_data_doc["variables"][1]["co2"]["value"] = avg_co2;
-  mqtt_data_doc["variables"][2]["pm25"]["value"] = avg_pm25;
-  mqtt_data_doc["variables"][3]["humidity"]["value"] = h;
-  mqtt_data_doc["variables"][4]["temperature"]["value"] = t;
+  mqtt_data_doc["fields"][0]["snd"] = avg_sound;
+  mqtt_data_doc["fields"][1]["co2"] = avg_co2;
+  mqtt_data_doc["fields"][2]["pm25"] = avg_pm25;
+  mqtt_data_doc["fields"][3]["hum"] = h;
+  mqtt_data_doc["fields"][4]["temp"] = t;
 
   // Usar esquema de ioticos para almacenar datos en json
   // https://github.com/ioticos/ioticos_god_level_esp32/blob/master/src/main.cpp
@@ -196,52 +196,47 @@ void createDataFrame(){
 void sendDataFrame(){
   createDataFrame();
 
- // String toSend = "";
-  char toSend[200];
-  char tmp    [3];
-  char hum    [50];
-  char sonid [50];
-  char co_2    [50];
-  char pm25   [50];
-  char estad_on   [4] = "on";
-  char estad_off   [5] = "off";
+  String toSend = "";
+  serializeJson(mqtt_data_doc, toSend);
+
+  // client.publish(topic.c_str(), toSend.c_str());
+  client.publish(topic, toSend.c_str());
+
 //**************************************************************************************
-//  ENVIA EL JSON COMPLETO
+//  VARIABLES INDIVIDUALES
 //**************************************************************************************
-  // serializeJson(mqtt_data_doc, toSend);
-  // Serial.println(toSend);
-  //  client.publish(topic, toSend);
-  //  client.subscribe(topic);
-//**************************************************************************************
-  //  Serial.print("temperatura:");
-  //  Serial.println(t);
-  // sprintf(mensaje, "Temperatura: %.2f. Humedad: %.2f", t, h);
-  // client.publish("datos/sensor", mensaje);
+  // char tmp    [3];
+  // char hum    [50];
+  // char sonid [50];
+  // char co_2    [50];
+  // char pm25   [50];
+  // char estad_on   [4] = "on";
+  // char estad_off   [5] = "off";
 //**************************************************************************************
 //  ENVIA LA TEMPERATURA
 //**************************************************************************************
-   snprintf (tmp, sizeof(tmp), "%ld", t);
-   client.publish(temperatura,  tmp); // topico, variable char
+  //  snprintf (tmp, sizeof(tmp), "%ld", t);
+  //  client.publish(temperatura,  tmp); // topico, variable char
 // //**************************************************************************************
 // //  ENVIA LA HUMERDAD
 // //**************************************************************************************
-   snprintf (hum, sizeof(hum), " %ld", h);
-   client.publish(humedad,  hum);
+  //  snprintf (hum, sizeof(hum), " %ld", h);
+  //  client.publish(humedad,  hum);
 //**************************************************************************************
 //  ENVIA LA SONIDO
 //**************************************************************************************
-   snprintf (sonid, sizeof(sonid), " %ld", avg_sound);
-   client.publish(sonido,  sonid);
+  //  snprintf (sonid, sizeof(sonid), " %ld", avg_sound);
+  //  client.publish(sonido,  sonid);
 // //**************************************************************************************
 // //  ENVIA LA CALIDAD DEL AIRE
 // //**************************************************************************************
-   snprintf (pm25, sizeof(pm25), " %ld", avg_pm25);
-   client.publish(aire,  pm25);
+  //  snprintf (pm25, sizeof(pm25), " %ld", avg_pm25);
+  //  client.publish(aire,  pm25);
 // //**************************************************************************************
 // //  ENVIA LA CO2
 // //**************************************************************************************
-   snprintf (co_2, sizeof(co_2), " %ld", avg_co2);
-   client.publish(co2,  co_2);
+  //  snprintf (co_2, sizeof(co_2), " %ld", avg_co2);
+  //  client.publish(co2,  co_2);
 
 // //**************************************************************************************
 // //  ENVIA EL ESTADO DEL DISPOSITIVO PARA VER SI ESTA EN LINEA
