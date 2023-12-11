@@ -1,6 +1,6 @@
 using namespace std;
 #include <Arduino.h>
-#include <WiFiManager.h>
+#include "conexion.h"
 #include "Colors.h"
 #include "IoTicosSplitter.h"
 #include <vector>
@@ -54,10 +54,12 @@ unsigned short int avg_co2 = 0;
 unsigned short int h = 0;
 unsigned short int t = 0;
 
+long lastReconnectAttemp = 0;
+
 bool ledToggle = false;
 
 // DHT21
-#define DHTTYPE DHT11       // DHT 22  (AM2302), AM2321 
+#define DHTTYPE DHT22     // DHT 22  (AM2302), AM2321 
 #define DHTPIN GPIO_NUM_13  // Digital pin connected to the DHT sensor
 DHT dht(DHTPIN, DHTTYPE);
 // SOUND
@@ -166,9 +168,17 @@ void co2Sample(){
 Task co2SampleTask(CO2_SAMPLE_TIME, TASK_FOREVER, &co2Sample);
 
 void htSample(){
-  h = dht.readHumidity();
+  unsigned short int next_h, next_t;
+  next_h = dht.readHumidity();  // A veces se desborda
+  if (!isnan(next_h)) h = next_h; 
   // Read temperature as Celsius (the default)
-  t = dht.readTemperature();
+  next_t = dht.readTemperature();
+  if (!isnan(next_t)) t = next_t;
+  // Check if any reads failed and exit early (to try again).
+  if (isnan(next_h) || isnan(next_t) ) {
+    DMSGln("Failed to read from DHT sensor!");
+    return;
+  }
   DMSG("Temperature ");DMSGln(t);
   DMSG("Humidity ");DMSGln(h);
 }
@@ -187,9 +197,6 @@ void createDataFrame(){
   mqtt_data_doc["fields"][2]["pm25"] = avg_pm25;
   mqtt_data_doc["fields"][3]["hum"] = h;
   mqtt_data_doc["fields"][4]["temp"] = t;
-
-  // Usar esquema de ioticos para almacenar datos en json
-  // https://github.com/ioticos/ioticos_god_level_esp32/blob/master/src/main.cpp
 }
 
 // MQTT Broker
@@ -201,53 +208,6 @@ void sendDataFrame(){
 
   // client.publish(topic.c_str(), toSend.c_str());
   client.publish(topic, toSend.c_str());
-
-//**************************************************************************************
-//  VARIABLES INDIVIDUALES
-//**************************************************************************************
-  // char tmp    [3];
-  // char hum    [50];
-  // char sonid [50];
-  // char co_2    [50];
-  // char pm25   [50];
-  // char estad_on   [4] = "on";
-  // char estad_off   [5] = "off";
-//**************************************************************************************
-//  ENVIA LA TEMPERATURA
-//**************************************************************************************
-  //  snprintf (tmp, sizeof(tmp), "%ld", t);
-  //  client.publish(temperatura,  tmp); // topico, variable char
-// //**************************************************************************************
-// //  ENVIA LA HUMERDAD
-// //**************************************************************************************
-  //  snprintf (hum, sizeof(hum), " %ld", h);
-  //  client.publish(humedad,  hum);
-//**************************************************************************************
-//  ENVIA LA SONIDO
-//**************************************************************************************
-  //  snprintf (sonid, sizeof(sonid), " %ld", avg_sound);
-  //  client.publish(sonido,  sonid);
-// //**************************************************************************************
-// //  ENVIA LA CALIDAD DEL AIRE
-// //**************************************************************************************
-  //  snprintf (pm25, sizeof(pm25), " %ld", avg_pm25);
-  //  client.publish(aire,  pm25);
-// //**************************************************************************************
-// //  ENVIA LA CO2
-// //**************************************************************************************
-  //  snprintf (co_2, sizeof(co_2), " %ld", avg_co2);
-  //  client.publish(co2,  co_2);
-
-// //**************************************************************************************
-// //  ENVIA EL ESTADO DEL DISPOSITIVO PARA VER SI ESTA EN LINEA
-// //**************************************************************************************
-
-  // snprintf (estad_on, sizeof(estad_on), " %ld", estad_on);
-  // client.publish(estado_on,  estad_on);
-
-//**************************************************************************************
-//  ENVIA EL ESTADO DEL DISPOSITIVO PARA VER SI ESTA APAGADO
-//**************************************************************************************
 
  //  snprintf (estad_off, sizeof(estad_off), " %ld", estad_off);
  //  client.publish(estado_off,  estad_off);
@@ -274,6 +234,38 @@ void callback(char *topic, byte *payload, unsigned int length) {
 }
 
 //**********************************************************************************
+bool reconnect()
+{
+
+  // if (!get_mqtt_credentials())
+  // {
+  //   Serial.println(boldRed + "\n\n      Error getting mqtt credentials :( \n\n RESTARTING IN 10 SECONDS");
+  //   Serial.println(fontReset);
+  //   delay(10000);
+  //   ESP.restart();
+  // }
+
+  //Setting up Mqtt Server
+  //conectando a mqtt broker
+ client.setServer(mqtt_broker, mqtt_port);
+ client.setCallback(callback);
+ while (!client.connected()) {
+     String client_id = "esp32-client-";
+     client_id += String(WiFi.macAddress());
+     Serial.printf("The client %s connects to the public mqtt broker\n", client_id.c_str());
+     if (client.connect(client_id.c_str(), mqtt_username, mqtt_password)) {
+         Serial.println("Public emqx mqtt broker connected");
+     } else {
+         Serial.print("failed with state ");
+         Serial.print(client.state());
+         delay(2000);
+     }
+ }
+ // publish and subscribe
+ client.publish(topic, "Hola soy el Esp32 conectado");
+ client.subscribe(topic);
+
+}
 
 void setup(){
 
@@ -373,29 +365,22 @@ void setup(){
 }
 
 void loop(){
-  runner.execute(); 
   conexion();
-  client.loop();
-
-}
-
-void conexion()
-{
-
-  while (WiFi.status() != WL_CONNECTED)
+  if (!client.connected())
   {
-    delay(500);
-    Serial.print(".");
-    counter++;
 
-    if (counter > 20)
+    long now = millis();
+
+    if (now - lastReconnectAttemp > 5000)
     {
-      Serial.print("  ⤵" + fontReset);
-      Serial.print(Red + "\n\n         Fallo la conexion Wifi :( ");
-      Serial.println(" -> Restarting..." + fontReset);
-      delay(2000);
-      ESP.restart();
+      lastReconnectAttemp = millis();
+      if (reconnect())
+      {
+        lastReconnectAttemp = 0;
+      }
     }
-  } 
-
+  } else {
+    client.loop();
+  runner.execute(); 
+  }
 }
