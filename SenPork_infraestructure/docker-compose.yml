@@ -24,6 +24,21 @@ services:
     env_file:
       - senpork.env
 
+  grafana:
+    container_name: visualizer
+    image: grafana/grafana-oss
+    user: "0"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data/grafana:/var/lib/grafana
+      - ./log/grafana:/var/log/grafana
+    env_file:
+      - senpork.env
+    links:
+      - influxdb
+    restart: always
+
   telegraf:
     container_name: ingestor
     image: telegraf:1.28
