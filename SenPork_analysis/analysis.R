@@ -5,7 +5,7 @@ library(fpp3)
 
 ## You can generate an API token from the "API Tokens Tab" in the UI
 ## In your R console you can set token as
-## Sys.setenv(INFLUX_TOKEN="__generated_api_token__")
+source("env.R")
 token <- Sys.getenv("INFLUX_TOKEN")
 
 client <- InfluxDBClient$new(
@@ -39,11 +39,10 @@ tables <- tables |>
 
 str(tables)
 
-
-tables <- purrr::map(tables, tibble) |> purrr::set_names(fields)
-
 tables$snd
-
+ts1 <- tables$co2[,c("time","_value")] |> tsibble()
+ts1 <- ts1[-which(ts1$`_value` == ts1$`_value` |> max()), ]
+ts1 |> autoplot()
 
 str(tables)
 
@@ -53,7 +52,6 @@ df1 <- tables[[1]][c("time", "_value")]
 
 ts1 <- tsibble(df1)
 
-ts1 <- ts1[-which(ts1$`_value` == ts1$`_value` |> max()), ]
 
 ## https://github.com/tidyverse/ggplot2/issues/4288
 ts1 %>% autoplot()
