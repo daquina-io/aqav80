@@ -1,0 +1,34 @@
+---
+title: "Reporte de mediciones sensores"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    fig_width: 8
+    fig_height: 4
+---
+
+
+## Temperatura
+```{r echo = FALSE}
+dygraph(tables$temp[, c("time", "_value")], group = "senpork") |> dySeries("_value", label ="Temperatura (C)") |> dyRangeSelector()
+```
+## Humedad
+```{r echo = FALSE}
+dygraph(tables$hum[, c("time", "_value")], group = "senpork") |> dySeries("_value", label ="Humedad (%)") |> dyRangeSelector()
+```
+
+## CO2
+```{r echo = FALSE}
+dygraph(tables$co2[, c("time", "_value")], group = "senpork") |> dySeries("_value", label ="CO2 (ppm)") |> dyRangeSelector()
+```
+
+## Material particulado
+```{r echo = FALSE}
+dygraph(tables$pm25[, c("time", "_value")], group = "senpork") |> dySeries("_value", label ="Material particulado (µg/m3)") |> dyRangeSelector()
+```
+
+## Presión sonora
+```{r echo = FALSE}
+dygraph(tables$snd[, c("time", "_value")], group = "senpork")
+```
