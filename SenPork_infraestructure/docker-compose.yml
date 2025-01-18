@@ -12,9 +12,11 @@ services:
       - 18083:18083
     depends_on:
       - influxdb
+    env_file:
+      - senpork.env
 
   influxdb:
-    container_name: persitence
+    container_name: persistence
     image: influxdb:2.7
     ports:
       - 8086:8086
@@ -23,6 +25,7 @@ services:
       - ./conf/influxdb:/etc/influxdb2
     env_file:
       - senpork.env
+    restart: always
 
   grafana:
     container_name: visualizer
@@ -39,6 +42,7 @@ services:
       - influxdb
     restart: always
 
+
   telegraf:
     container_name: ingestor
     image: telegraf:1.28
@@ -53,4 +57,25 @@ services:
     depends_on:
       - emqx
       - influxdb
+    restart: always
+
+  caddy:
+    container_name: reverse_proxy
+    image: caddy:2.7
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./conf/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./conf/caddy/auth_credentials:/etc/caddy/auth_credentials:ro
+      - ./data/caddy/data:/data
+      - ./data/caddy/config:/config
+      - ./data/static_files/:/var/www/
+    env_file:
+      - senpork.env
+    depends_on:
+      - emqx
+      - grafana
+      - influxdb
+    restart: always
 
