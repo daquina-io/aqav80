@@ -1,0 +1,45 @@
+{
+    email unloquer@gmail.com
+    auto_https disable_redirects
+}
+
+# Grafana
+grafana.{$DOMAIN} {
+    reverse_proxy visualizer:3000
+}
+
+# EMQX Dashboard
+mqtt.{$DOMAIN} {
+    reverse_proxy pubsub_broker:18083
+}
+
+# InfluxDB
+influx.{$DOMAIN} {
+    reverse_proxy persistence:8086
+}
+
+# MQTT WebSocket (if needed)
+ws.{$DOMAIN} {
+    reverse_proxy pubsub_broker:8083
+}
+
+reportes.{$DOMAIN} {
+    root * /var/www/
+    encode gzip
+
+    basic_auth / {
+        import /etc/caddy/auth_credentials
+    }
+
+    file_server browse {
+        hide .git
+    }
+
+    log {
+        output file /var/log/caddy/my-static-site.log
+    }
+
+    header {
+        ?Cache-Control "max-age=1800"
+    }
+}
