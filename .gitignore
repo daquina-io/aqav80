@@ -5,3 +5,7 @@ wifi_credentials.txt
 src/variables.h
 SenPork_infraestructure/senpork.env
 SenPork_infraestructure/conf/caddy/auth_credentials
+SenPork_firmware/private_key.pem
+SenPork_firmware/public_key.pem
+SenPork_firmware/public_key.der
+SenPork_firmware/src/public_key.h
