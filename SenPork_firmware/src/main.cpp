@@ -1,5 +1,6 @@
 using namespace std;
 #include <Arduino.h>
+#include <Preferences.h>
 #include "conexion.h"
 #include "Colors.h"
 #include "IoTicosSplitter.h"
@@ -11,7 +12,6 @@ using namespace std;
 #include <Adafruit_Sensor.h>
 #include <DHT.h>
 #include <DHT_U.h>
-#include <FastLED.h>
 #include <SoftwareSerial.h>
 #include <PMS.h>
 #include <TaskScheduler.h>
@@ -19,8 +19,18 @@ using namespace std;
 #include <ArduinoJson.h>
 #include <PubSubClient.h>
 #include "variables.h"
+#include <HTTPClient.h>
+#include <HTTPUpdate.h>
+
+#include <mbedtls/md.h>
+#include <mbedtls/pk.h>
+#include <mbedtls/rsa.h>
+#include "public_key.h"
+
+Preferences preferences;
 
 //#define DEBUGGING
+//#define MOCK_DATA
 
 #ifdef  DEBUGGING
 #define DMSG(args...)     Serial.print(args)
@@ -34,13 +44,13 @@ using namespace std;
 
 // FUNCTION SIGNATURES
 //void connectToWifi();
-
-
+void performOTAUpdate();
 void conexion();
+String generateDeviceID();
 int counter = 0;
 
 WiFiClient espclient;
-PubSubClient client(espclient);
+PubSubClient mqttClient(espclient);
 DynamicJsonDocument mqtt_data_doc(2048);
 
 vector<unsigned int> v25;      // for average
@@ -98,6 +108,9 @@ unsigned short int getSoundSamplesAverage(){
   return sound_average;
 }
 void soundSample(){
+#ifdef MOCK_DATA
+  unsigned int peakToPeak = random(10, 500);
+#else
   DMSG("Leyendo Mic ... ");
   unsigned long startMillis= millis();  // Start of sample window
   unsigned int peakToPeak = 0;   // peak-to-peak level
@@ -124,6 +137,7 @@ void soundSample(){
   // DMSGln(logmaplv);
   DMSGln(peakToPeak);
   // vsound.push_back(logmaplv);
+#endif
   vsound.push_back(peakToPeak);
 }
 Task soundSampleTask(SOUND_SAMPLE_TIME, TASK_FOREVER, &soundSample);
@@ -134,12 +148,17 @@ unsigned short int getPmSamplesAverage(){
   return pm25_average;
 }
 void pmSample(){
+#ifdef MOCK_DATA
+  data.PM_AE_UG_2_5 = random(10, 500);
+  v25.push_back(data.PM_AE_UG_2_5);
+#else
   DMSG("Leyendo PM ... ");
   if (pms.readUntil(data)) {
     v25.push_back(data.PM_AE_UG_2_5);
     DMSGln(data.PM_AE_UG_2_5);
   }
   else DMSGln("No data.");
+#endif
 }
 Task pmSampleTask(PM_SAMPLE_TIME, TASK_FOREVER, &pmSample);
 
@@ -152,15 +171,19 @@ void co2Sample(){
   /* note: getCO2() default is command "CO2 Unlimited". This returns the correct CO2 reading even 
   if below background CO2 levels or above range (useful to validate sensor). You can use the 
   usual documented command with getCO2(false) */
-
+#ifdef MOCK_DATA
+  int CO2 = random(400, 1000);
+#else
   int CO2;
   CO2 = myMHZ19.getCO2();
+#endif
   vco2.push_back(CO2);                             // Request CO2 (as ppm)
   
   DMSG("CO2 (ppm): ");                      
   DMSGln(CO2);                                
 
   int8_t Temp;
+
   Temp = myMHZ19.getTemperature();                     // Request Temperature (as Celsius)
   DMSG("Temperature (C): ");                  
   DMSGln(Temp);     
@@ -168,6 +191,10 @@ void co2Sample(){
 Task co2SampleTask(CO2_SAMPLE_TIME, TASK_FOREVER, &co2Sample);
 
 void htSample(){
+#ifdef MOCK_DATA
+  h = random(40, 60);
+  t = random(20, 30);
+#else
   unsigned short int next_h, next_t;
   next_h = dht.readHumidity();  // A veces se desborda
   if (!isnan(next_h)) h = next_h; 
@@ -179,6 +206,7 @@ void htSample(){
     DMSGln("Failed to read from DHT sensor!");
     return;
   }
+#endif
   DMSG("Temperature ");DMSGln(t);
   DMSG("Humidity ");DMSGln(h);
 }
@@ -206,11 +234,7 @@ void sendDataFrame(){
   String toSend = "";
   serializeJson(mqtt_data_doc, toSend);
 
-  // client.publish(topic.c_str(), toSend.c_str());
-  client.publish(topic, toSend.c_str());
-
- //  snprintf (estad_off, sizeof(estad_off), " %ld", estad_off);
- //  client.publish(estado_off,  estad_off);
+  mqttClient.publish(topic, toSend.c_str());
 
   // Enviar via mqtt como lo hace ioticos
   // https://github.com/ioticos/ioticos_god_level_esp32/blob/master/src/main.cpp
@@ -218,19 +242,23 @@ void sendDataFrame(){
 }
 Task sendDataFrameTask(SEND_DATA_TIME, TASK_FOREVER, &sendDataFrame);
 
-//*********************************************************************************
-// implementacion de codigo para recibir datos MQTT UBER
-//*********************************************************************************
+// MQTT message callback
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
+  Serial.print("Message arrived on topic: ");
+  Serial.print(topic);
+  Serial.print(". Message: ");
+  String message;
+  for (int i = 0; i < length; i++) {
+    message += (char)payload[i];
+  }
+  Serial.println(message);
 
-void callback(char *topic, byte *payload, unsigned int length) {
- Serial.print("Mensaje recibido en topic: ");
- Serial.println(topic);
- Serial.print("Mensaje:");
- for (int i = 0; i < length; i++) {
-     Serial.print((char) payload[i]);
- }
- Serial.println();
- Serial.println("-----------------------");
+  // Check if the message is to trigger OTA update
+  if (String(topic) == otaTriggerTopic && message == "start") {
+    Serial.println("OTA update triggered via MQTT");
+    mqttClient.publish(otaStatusTopic, "OTA update started");
+    performOTAUpdate();
+  }
 }
 
 //**********************************************************************************
@@ -247,35 +275,55 @@ bool reconnect()
 
   //Setting up Mqtt Server
   //conectando a mqtt broker
- client.setServer(mqtt_broker, mqtt_port);
- client.setCallback(callback);
- while (!client.connected()) {
+ mqttClient.setServer(mqtt_broker, mqtt_port);
+ mqttClient.setCallback(mqttCallback);
+ while (!mqttClient.connected()) {
      String client_id = "esp32-client-";
      client_id += String(WiFi.macAddress());
      Serial.printf("The client %s connects to the public mqtt broker\n", client_id.c_str());
-     if (client.connect(client_id.c_str(), mqtt_username, mqtt_password)) {
+     if (mqttClient.connect(client_id.c_str(), mqtt_username, mqtt_password)) {
          Serial.println("Public emqx mqtt broker connected");
+         mqttClient.subscribe(otaTriggerTopic);
+         Serial.println("Subscribed to otaTriggerTopic");
      } else {
          Serial.print("failed with state ");
-         Serial.print(client.state());
+         Serial.print(mqttClient.state());
          delay(2000);
      }
  }
  // publish and subscribe
- client.publish(topic, "Hola soy el Esp32 conectado");
- client.subscribe(topic);
-
+ //mqttClient.publish(topic, "Hola soy el Esp32 conectado");
+// mqttClient.subscribe(topic);
 }
 
 void setup(){
 
   Serial.begin(115200);
+
+  preferences.begin("device", false);
+  // Check if a device ID already exists
+  String deviceID = preferences.getString("deviceID", "");
+
+  if (deviceID == "") {
+      // Generate a new device ID
+      deviceID = generateDeviceID();
+      
+      // Save the device ID to NVS
+      preferences.putString("deviceID", deviceID);
+      Serial.println("New Device ID Generated and Saved: " + deviceID);
+  } else {
+      // Use the existing device ID
+      Serial.println("Existing Device ID: " + deviceID);
+  }
+
+  // Close Preferences
+  preferences.end();
+
 // *********************************************************************************
 // AQUI VA EL CODIGO DE LA CONEXION WIFIMANAGER
 // *********************************************************************************
 
-    WiFi.mode(WIFI_STA); // modo establecido explícitamente, especialmente el valor predeterminado es STA+AP
-
+    WiFi.mode(WIFI_STA); 
     Serial.begin(115200);
     pinMode(LED_BUILTIN, OUTPUT);
     digitalWrite(LED_BUILTIN, HIGH);
@@ -283,13 +331,12 @@ void setup(){
     WiFiManager wiFiManager;
 
     // restablecer la configuración: borrar las credenciales almacenadas para realizar pruebas
-   // wiFiManager.resetSettings();
+    // wiFiManager.resetSettings();
      
     //Tiempo de espera del portal de configuración
     //Si necesita establecer un tiempo de espera para que el ESP no se bloquee esperando 
     //a ser configurado, por ejemplo después de un corte de energía, puede agregar
     wiFiManager.setConfigPortalTimeout(180);
-
 
      // Conéctate automáticamente usando las credenciales guardadas,
      // si la conexión falla, inicia un punto de acceso con el nombre especificado ("Sensores"),
@@ -314,7 +361,7 @@ void setup(){
         Serial.println(WiFi.localIP());   
     }
 
-// *********************************************************************************
+  // *********************************************************************************
   //connectToWifi();
   
   pms.wakeUp();
@@ -343,30 +390,30 @@ void setup(){
 
 
  //conectando a mqtt broker
- client.setServer(mqtt_broker, mqtt_port);
- client.setCallback(callback);
- while (!client.connected()) {
+ mqttClient.setServer(mqtt_broker, mqtt_port);
+ mqttClient.setCallback(mqttCallback);
+ while (!mqttClient.connected()) {
      String client_id = "esp32-client-";
      client_id += String(WiFi.macAddress());
      Serial.printf("The client %s connects to the public mqtt broker\n", client_id.c_str());
-     if (client.connect(client_id.c_str(), mqtt_username, mqtt_password)) {
+     if (mqttClient.connect(client_id.c_str(), mqtt_username, mqtt_password)) {
          Serial.println("Public emqx mqtt broker connected");
+          mqttClient.subscribe(otaTriggerTopic);
+         Serial.println("Subscribed to otaTriggerTopic");
      } else {
          Serial.print("failed with state ");
-         Serial.print(client.state());
+        Serial.print(mqttClient.state());
          delay(2000);
      }
  }
  // publish and subscribe
- client.publish(topic, "Hola soy el Esp32 conectado");
- client.subscribe(topic);
-
-
+ //mqttClient.publish(topic, "Hola soy el Esp32 conectado");
+ //mqttClient.subscribe(topic);
 }
 
 void loop(){
   conexion();
-  if (!client.connected())
+  if (!mqttClient.connected())
   {
 
     long now = millis();
@@ -380,7 +427,158 @@ void loop(){
       }
     }
   } else {
-    client.loop();
-  runner.execute(); 
+    mqttClient.loop();
+    runner.execute(); 
   }
+}
+
+void performOTAUpdate() {
+  Serial.println("Checking for updates...");
+
+  // RAII wrapper for mbedtls contexts
+class MbedContexts {
+    public:
+        // These are mbedtls context objects that need proper initialization/cleanup
+        mbedtls_pk_context pkContext;     // Public key context
+        mbedtls_md_context_t mdContext;   // Message digest context
+        
+        // Constructor - automatically called when object is created
+        MbedContexts() {
+            mbedtls_pk_init(&pkContext);  // Initialize public key context
+            mbedtls_md_init(&mdContext);  // Initialize message digest context
+        }
+        
+        // Destructor - automatically called when object goes out of scope
+        ~MbedContexts() {
+            mbedtls_md_free(&mdContext);  // Clean up message digest context
+            mbedtls_pk_free(&pkContext);  // Clean up public key context
+        }
+} contexts;  // Creates a single instance named 'contexts'
+
+  // Download signature
+  HTTPClient sigHttp;
+  sigHttp.begin(firmwareSigUrl);
+  int httpCode = sigHttp.GET();
+  if (httpCode != HTTP_CODE_OK) {
+    Serial.println("Failed to download signature");
+    mqttClient.publish(otaStatusTopic, "Failed to download signature");
+    return;
+  }
+
+  size_t signatureSize = sigHttp.getSize();
+  std::unique_ptr<uint8_t[]> signature(new uint8_t[signatureSize]);
+  if (!signature) {
+    Serial.println("Failed to allocate signature memory");
+    mqttClient.publish(otaStatusTopic, "Memory allocation failed");
+    return;
+  }
+
+  sigHttp.getStreamPtr()->readBytes(signature.get(), signatureSize);
+  sigHttp.end();
+
+  // Setup crypto contexts
+  if (mbedtls_pk_parse_public_key(&contexts.pkContext, public_key_der, public_key_der_len) != 0) {
+    Serial.println("Failed to parse public key");
+    mqttClient.publish(otaStatusTopic, "Failed to parse public key");
+    return;
+  }
+
+  if (mbedtls_md_setup(&contexts.mdContext, mbedtls_md_info_from_type(MBEDTLS_MD_SHA256), 0) != 0) {
+    Serial.println("Failed to setup hash context");
+    mqttClient.publish(otaStatusTopic, "Hash setup failed");
+    return;
+  }
+
+  // Download and verify firmware
+  HTTPClient firmwareHttp;
+  firmwareHttp.begin(firmwareUrl);
+  httpCode = firmwareHttp.GET();
+  if (httpCode != HTTP_CODE_OK) {
+    Serial.println("Failed to start firmware download");
+    mqttClient.publish(otaStatusTopic, "Firmware download failed");
+    return;
+  }
+
+  WiFiClient* client = firmwareHttp.getStreamPtr();
+  const size_t bufSize = 1024;
+  std::unique_ptr<uint8_t[]> buf(new uint8_t[bufSize]);
+  if (!buf) {
+    Serial.println("Failed to allocate buffer");
+    mqttClient.publish(otaStatusTopic, "Memory allocation failed");
+    return;
+  }
+
+  int totalBytes = firmwareHttp.getSize();
+  int remainingBytes = totalBytes;
+
+  mbedtls_md_starts(&contexts.mdContext);
+
+  // Hash the firmware
+  while (remainingBytes > 0) {
+    size_t bytesToRead = remainingBytes > bufSize ? bufSize : remainingBytes;
+    size_t bytesRead = client->readBytes(buf.get(), bytesToRead);
+    
+    if (bytesRead == 0) {
+      Serial.println("Read timeout");
+      mqttClient.publish(otaStatusTopic, "Firmware read timeout");
+      return;
+    }
+
+    mbedtls_md_update(&contexts.mdContext, buf.get(), bytesRead);
+    remainingBytes -= bytesRead;
+  }
+
+  uint8_t hash[32];
+  mbedtls_md_finish(&contexts.mdContext, hash);
+
+  // Verify signature
+  if (mbedtls_pk_verify(&contexts.pkContext, MBEDTLS_MD_SHA256, hash, sizeof(hash), 
+                        signature.get(), signatureSize) != 0) {
+    Serial.println("Signature verification failed");
+    mqttClient.publish(otaStatusTopic, "Signature verification failed");
+    return;
+  }
+
+  firmwareHttp.end();
+  Serial.println("Signature verified successfully");
+  mqttClient.publish(otaStatusTopic, "Signature verified");
+
+  // Perform update
+  firmwareHttp.begin(firmwareUrl);
+  client = firmwareHttp.getStreamPtr();
+  t_httpUpdate_return ret = httpUpdate.update(*client, firmwareUrl);
+
+  switch (ret) {
+    case HTTP_UPDATE_FAILED:
+      Serial.printf("HTTP_UPDATE_FAILED Error (%d): %s\n", 
+                   httpUpdate.getLastError(),
+                   httpUpdate.getLastErrorString().c_str());
+      mqttClient.publish(otaStatusTopic, "OTA update failed");
+      break;
+
+    case HTTP_UPDATE_NO_UPDATES:
+      Serial.println("HTTP_UPDATE_NO_UPDATES");
+      mqttClient.publish(otaStatusTopic, "No updates available");
+      break;
+
+    case HTTP_UPDATE_OK:
+      Serial.println("HTTP_UPDATE_OK");
+      mqttClient.publish(otaStatusTopic, "OTA update successful");
+      break;
+  }
+}
+
+String generateDeviceID() {
+    // Use the ESP32's MAC address as a base
+    uint8_t mac[6];
+    esp_read_mac(mac, ESP_MAC_WIFI_STA);
+    
+    // Convert MAC address to a string
+    char macStr[18];
+    snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X", 
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    
+    // Add a hash or custom logic to make it more unique (optional)
+    // For simplicity, we'll just use the MAC address as the device ID
+    return String(macStr);
 }
