@@ -8,10 +8,6 @@ using namespace std;
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include "HardwareSerial.h"
-#include <Adafruit_Sensor.h>
-#include <DHT.h>
-#include <DHT_U.h>
-#include <FastLED.h>
 #include <SoftwareSerial.h>
 #include <PMS.h>
 #include <TaskScheduler.h>
@@ -19,6 +15,10 @@ using namespace std;
 #include <ArduinoJson.h>
 #include <PubSubClient.h>
 #include "variables.h"
+#include "hal/hal.h"
+
+// Remove individual sensor declarations
+HAL& hal = HAL::getInstance();
 
 //#define DEBUGGING
 
@@ -58,31 +58,6 @@ long lastReconnectAttemp = 0;
 
 bool ledToggle = false;
 
-// DHT21
-#define DHTTYPE DHT22     // DHT 22  (AM2302), AM2321 
-#define DHTPIN GPIO_NUM_13  // Digital pin connected to the DHT sensor
-DHT dht(DHTPIN, DHTTYPE);
-// SOUND
-#define ADC_PIN GPIO_NUM_35
-const int sampleWindow = 50; // Sample window width in mS (50 mS = 20Hz)
-unsigned int sample;
-// PLANTOWER
-// HardwareSerial plantower_serial(1);
-#define P_TOWER_TX GPIO_NUM_14
-#define P_TOWER_RX GPIO_NUM_34
-SoftwareSerial plantower_serial(P_TOWER_TX, P_TOWER_RX);
-PMS pms(plantower_serial);
-PMS::DATA data;
-
-
-// MHZ19
-#define MHZ_TX GPIO_NUM_16
-#define MHZ_RX GPIO_NUM_17
-#define BAUDRATE 9600
-// HardwareSerial Serial1 -> mhz_serial;
-HardwareSerial mhz_serial(2);
-MHZ19 myMHZ19;
-
 // TaskScheduler
 Scheduler runner;
 #define SOUND_SAMPLE_TIME 120
@@ -99,27 +74,9 @@ unsigned short int getSoundSamplesAverage(){
 }
 void soundSample(){
   DMSG("Leyendo Mic ... ");
-  unsigned long startMillis= millis();  // Start of sample window
-  unsigned int peakToPeak = 0;   // peak-to-peak level
-
-  unsigned int signalMax = 0;
-  unsigned int signalMin = 4095; // La resolución del ADC en el esp32 es mayor (12bits) 4095
-
-  // collect data for 50 mS
-  while (millis() - startMillis < sampleWindow)
-    {
-      sample = analogRead(ADC_PIN);
-      if (sample > signalMax)
-        {
-          signalMax = sample;  // save just the max levels
-        }
-      else if (sample < signalMin)
-        {
-          signalMin = sample;  // save just the min levels
-        }
-    }
-  peakToPeak = signalMax - signalMin;  // max - min = peak-peak amplitude
-    // tomado de https://forum.arduino.cc/t/map-but-log/379910/3
+  unsigned int peakToPeak;
+  hal.getSoundSensor().read(peakToPeak);
+  // tomado de https://forum.arduino.cc/t/map-but-log/379910/3
   int logmaplv = log(peakToPeak + 1) / log(900) * 9;
   // DMSGln(logmaplv);
   DMSGln(peakToPeak);
@@ -135,9 +92,10 @@ unsigned short int getPmSamplesAverage(){
 }
 void pmSample(){
   DMSG("Leyendo PM ... ");
-  if (pms.readUntil(data)) {
-    v25.push_back(data.PM_AE_UG_2_5);
-    DMSGln(data.PM_AE_UG_2_5);
+  uint16_t pm25;
+  if (hal.getPMSensor().read(pm25)) {
+    v25.push_back(pm25);
+    DMSGln(pm25);
   }
   else DMSGln("No data.");
 }
@@ -148,39 +106,32 @@ unsigned short int getCo2SamplesAverage(){
   vco2.clear();
   return co2_average;
 }
-void co2Sample(){
-  /* note: getCO2() default is command "CO2 Unlimited". This returns the correct CO2 reading even 
-  if below background CO2 levels or above range (useful to validate sensor). You can use the 
-  usual documented command with getCO2(false) */
-
-  int CO2;
-  CO2 = myMHZ19.getCO2();
-  vco2.push_back(CO2);                             // Request CO2 (as ppm)
-  
-  DMSG("CO2 (ppm): ");                      
-  DMSGln(CO2);                                
-
-  int8_t Temp;
-  Temp = myMHZ19.getTemperature();                     // Request Temperature (as Celsius)
-  DMSG("Temperature (C): ");                  
-  DMSGln(Temp);     
+void co2Sample() {
+    int co2;
+    int8_t temperature;
+    
+    if (hal.getCO2Sensor().read(co2, temperature)) {
+        vco2.push_back(co2);
+        DMSG("CO2 (ppm): ");
+        DMSGln(co2);
+        DMSG("Temperature (C): ");
+        DMSGln(temperature);
+    } else {
+        DMSGln("Failed to read CO2 sensor");
+    }
 }
 Task co2SampleTask(CO2_SAMPLE_TIME, TASK_FOREVER, &co2Sample);
 
-void htSample(){
-  unsigned short int next_h, next_t;
-  next_h = dht.readHumidity();  // A veces se desborda
-  if (!isnan(next_h)) h = next_h; 
-  // Read temperature as Celsius (the default)
-  next_t = dht.readTemperature();
-  if (!isnan(next_t)) t = next_t;
-  // Check if any reads failed and exit early (to try again).
-  if (isnan(next_h) || isnan(next_t) ) {
-    DMSGln("Failed to read from DHT sensor!");
-    return;
-  }
-  DMSG("Temperature ");DMSGln(t);
-  DMSG("Humidity ");DMSGln(h);
+void htSample() {
+    float temperature, humidity;
+    if (hal.getTemperatureSensor().read(temperature, humidity)) {
+        t = (unsigned short int)temperature;
+        h = (unsigned short int)humidity;
+        DMSG("Temperature "); DMSGln(t);
+        DMSG("Humidity "); DMSGln(h);
+    } else {
+        DMSGln("Error reading SHT40 sensor!");
+    }
 }
 Task htSampleTask(HT_SAMPLE_TIME, TASK_FOREVER, &htSample);
 
@@ -317,14 +268,8 @@ void setup(){
 // *********************************************************************************
   //connectToWifi();
   
-  pms.wakeUp();
-  plantower_serial.begin(9600);
-  
-  dht.begin();
-
-  mhz_serial.begin(9600);
-  myMHZ19.begin(mhz_serial);
-  myMHZ19.autoCalibration(); 
+  // Initialize HAL instead of individual sensors
+  hal.init();
 
   // setup time
   runner.init();
