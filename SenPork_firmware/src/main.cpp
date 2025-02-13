@@ -129,7 +129,11 @@ unsigned short int getCo2SamplesAverage(){
 void co2Sample() {
     int co2;
     int8_t temperature;
-    
+
+    #ifdef MOCK_DATA
+    co2 = random(400, 1000);
+    temperature = random(20, 30);
+    #else
     if (hal.getCO2Sensor().read(co2, temperature)) {
         vco2.push_back(co2);
         DMSG("CO2 (ppm): ");
@@ -139,11 +143,16 @@ void co2Sample() {
     } else {
         DMSGln("Failed to read CO2 sensor");
     }
+    #endif
 }
 Task co2SampleTask(CO2_SAMPLE_TIME, TASK_FOREVER, &co2Sample);
 
 void htSample() {
     float temperature, humidity;
+    #ifdef MOCK_DATA
+    temperature = random(20, 30);
+    humidity = random(40, 60);
+    #else
     if (hal.getTemperatureSensor().read(temperature, humidity)) {
         t = (unsigned short int)temperature;
         h = (unsigned short int)humidity;
@@ -152,6 +161,7 @@ void htSample() {
     } else {
         DMSGln("Error reading SHT40 sensor!");
     }
+    #endif
 }
 Task htSampleTask(HT_SAMPLE_TIME, TASK_FOREVER, &htSample);
 

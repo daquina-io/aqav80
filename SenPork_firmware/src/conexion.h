@@ -49,13 +49,8 @@ int contador = 0;
           if(contador >=60){
             contador = 0;
             ESP.restart();
-
-          }
-   
-      
-  }
-
-
-  }
+          }      
+    }
+}
 
 
