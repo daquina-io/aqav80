@@ -1,14 +1,81 @@
 #include "co2_sensor.h"
+#include "../../utils/logger.h"
 
-void CO2Sensor::init(int rxPin, int txPin, HardwareSerial& serial) {
-    serialPort = &serial;
-    serialPort->begin(9600);
-    mhz19.begin(*serialPort);
-    mhz19.autoCalibration();
+bool CO2Sensor::init(int rxPin, int txPin, HardwareSerial& serial) {
+    try {
+        serialPort = &serial;
+        serialPort->begin(9600);
+        
+        mhz19.begin(*serialPort);
+        mhz19.autoCalibration();
+        
+        // Test if the sensor is responding
+        int co2 = mhz19.getCO2();
+        int8_t temp = mhz19.getTemperature();
+        
+        if (co2 > 0) {
+            LOG_I("CO2 sensor initialized. Initial readings: %d ppm, %d°C", co2, temp);
+            initialized = true;
+            return true;
+        } else {
+            LOG_W("CO2 sensor returned invalid initial reading");
+            return false;
+        }
+    } catch (...) {
+        LOG_E("Exception during CO2 sensor initialization");
+        return false;
+    }
 }
 
 bool CO2Sensor::read(int& co2, int8_t& temperature) {
-    co2 = mhz19.getCO2();
-    temperature = mhz19.getTemperature();
-    return co2 != 0; // Basic validation
+    if (!initialized) {
+        LOG_E("CO2 sensor not initialized");
+        return false;
+    }
+    
+    unsigned long startTime = millis();
+    while (millis() - startTime < READ_TIMEOUT) {
+        co2 = mhz19.getCO2();
+        temperature = mhz19.getTemperature();
+        
+        // Basic validation
+        if (co2 > 0 && co2 < 10000) {  // Reasonable CO2 range
+            LOG_V("CO2 reading: %d ppm, temperature: %d°C", co2, temperature);
+            return true;
+        }
+        
+        // Short delay before retry
+        delay(10);
+    }
+    
+    LOG_W("CO2 sensor read timeout or invalid reading");
+    return false;
+}
+
+void CO2Sensor::calibrate() {
+    if (initialized) {
+        LOG_I("Calibrating CO2 sensor");
+        mhz19.autoCalibration();
+    } else {
+        LOG_W("Cannot calibrate uninitialized CO2 sensor");
+    }
+}
+
+bool CO2Sensor::readWithRetry(int& co2, int8_t& temperature, int maxRetries, int retryDelayMs) {
+    for (int i = 0; i < maxRetries; i++) {
+        if (read(co2, temperature)) {
+            if (i > 0) {
+                LOG_D("CO2 sensor reading successful after %d retries", i);
+            }
+            return true;
+        }
+        
+        if (i < maxRetries - 1) {
+            LOG_D("Retrying CO2 sensor reading (%d/%d)...", i + 1, maxRetries);
+            delay(retryDelayMs);
+        }
+    }
+    
+    LOG_W("CO2 sensor reading failed after %d retries", maxRetries);
+    return false;
 } 

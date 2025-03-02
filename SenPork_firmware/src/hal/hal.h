@@ -5,6 +5,14 @@
 #include "sensors/co2_sensor.h"
 #include "sensors/pm_sensor.h"
 #include "sensors/sound_sensor.h"
+#include "../utils/logger.h"
+
+enum SensorType {
+    SENSOR_TEMPERATURE,
+    SENSOR_CO2,
+    SENSOR_PM,
+    SENSOR_SOUND
+};
 
 class HAL {
 public:
@@ -13,20 +21,38 @@ public:
         return instance;
     }
 
-    void init();
-    void update();
+    // Initialize all sensors, returns true if all sensors initialized successfully
+    bool init();
+    
+    // Check sensor initialization status
+    bool isSensorInitialized(SensorType sensor);
+    
+    // Initialize specific sensors, returns true if successful
+    bool initTemperatureSensor(int sdaPin, int sclPin);
+    bool initCO2Sensor(int rxPin, int txPin, HardwareSerial& serial);
+    bool initPMSensor(int rxPin, int txPin);
+    bool initSoundSensor(int adcPin);
 
-    TemperatureSensor& getTemperatureSensor() { return tempSensor; }
-    CO2Sensor& getCO2Sensor() { return co2Sensor; }
-    PMSensor& getPMSensor() { return pmSensor; }
-    SoundSensor& getSoundSensor() { return soundSensor; }
+    // Getters with initialization check
+    TemperatureSensor& getTemperatureSensor(); 
+    CO2Sensor& getCO2Sensor();
+    PMSensor& getPMSensor();
+    SoundSensor& getSoundSensor();
 
 private:
-    HAL() {} // Private constructor for singleton
+    HAL(); // Private constructor for singleton
     HAL(const HAL&) = delete; // Delete copy constructor
     HAL& operator=(const HAL&) = delete; // Delete assignment operator
+    
     TemperatureSensor tempSensor;
     CO2Sensor co2Sensor;
     PMSensor pmSensor;
     SoundSensor soundSensor;
+    
+    bool tempSensorInitialized;
+    bool co2SensorInitialized;
+    bool pmSensorInitialized;
+    bool soundSensorInitialized;
+    
+    const int MAX_INIT_RETRIES = 3;
 }; 

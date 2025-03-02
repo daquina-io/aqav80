@@ -1,20 +1,182 @@
 #include "hal.h"
 #include "board/ttgo_t7_v14.h"
+#include "../utils/logger.h"
 
-void HAL::init() {
-    // Initialize temperature sensor
-    tempSensor.init(BoardPins::I2C_SDA, BoardPins::I2C_SCL);
-    
-    // Initialize CO2 sensor
-    co2Sensor.init(BoardPins::CO2_RX, BoardPins::CO2_TX, Serial2);
-    
-    // Initialize PM sensor
-    pmSensor.init(BoardPins::PM_RX, BoardPins::PM_TX);
-    
-    // Initialize sound sensor
-    soundSensor.init(BoardPins::ADC_SOUND);
+HAL::HAL() : 
+    tempSensorInitialized(false),
+    co2SensorInitialized(false),
+    pmSensorInitialized(false),
+    soundSensorInitialized(false) {
 }
 
-void HAL::update() {
-    // Could be used for periodic updates if needed
+bool HAL::init() {
+    LOG_I("Initializing sensors...");
+    
+    bool allInitialized = true;
+    
+    // Initialize temperature sensor with retries
+    if (!initTemperatureSensor(BoardPins::I2C_SDA, BoardPins::I2C_SCL)) {
+        LOG_E("Failed to initialize temperature sensor!");
+        allInitialized = false;
+    }
+    
+    // Initialize CO2 sensor with retries
+    if (!initCO2Sensor(BoardPins::CO2_RX, BoardPins::CO2_TX, Serial2)) {
+        LOG_E("Failed to initialize CO2 sensor!");
+        allInitialized = false;
+    }
+    
+    // Initialize PM sensor with retries
+    if (!initPMSensor(BoardPins::PM_RX, BoardPins::PM_TX)) {
+        LOG_E("Failed to initialize PM sensor!");
+        allInitialized = false;
+    }
+    
+    // Initialize sound sensor
+    if (!initSoundSensor(BoardPins::ADC_SOUND)) {
+        LOG_E("Failed to initialize sound sensor!");
+        allInitialized = false;
+    }
+    
+    if (allInitialized) {
+        LOG_I("All sensors initialized successfully");
+    } else {
+        LOG_W("Some sensors failed to initialize");
+    }
+    
+    return allInitialized;
+}
+
+bool HAL::isSensorInitialized(SensorType sensor) {
+    switch (sensor) {
+        case SENSOR_TEMPERATURE: return tempSensorInitialized;
+        case SENSOR_CO2: return co2SensorInitialized;
+        case SENSOR_PM: return pmSensorInitialized;
+        case SENSOR_SOUND: return soundSensorInitialized;
+        default: return false;
+    }
+}
+
+bool HAL::initTemperatureSensor(int sdaPin, int sclPin) {
+    LOG_I("Initializing temperature sensor...");
+    
+    for (int i = 0; i < MAX_INIT_RETRIES; i++) {
+        try {
+            tempSensor.init(sdaPin, sclPin);
+            
+            // Test the sensor by reading values
+            float temp, humidity;
+            if (tempSensor.read(temp, humidity)) {
+                LOG_I("Temperature sensor initialized. Current readings: %.1f°C, %.1f%%", temp, humidity);
+                tempSensorInitialized = true;
+                return true;
+            }
+            
+            LOG_W("Temperature sensor initialization attempt %d failed, retrying...", i + 1);
+            delay(100);
+        } catch (...) {
+            LOG_E("Exception during temperature sensor initialization");
+        }
+    }
+    
+    return false;
+}
+
+bool HAL::initCO2Sensor(int rxPin, int txPin, HardwareSerial& serial) {
+    LOG_I("Initializing CO2 sensor...");
+    
+    for (int i = 0; i < MAX_INIT_RETRIES; i++) {
+        try {
+            co2Sensor.init(rxPin, txPin, serial);
+            
+            // Test the sensor by reading values
+            int co2;
+            int8_t temp;
+            if (co2Sensor.read(co2, temp)) {
+                LOG_I("CO2 sensor initialized. Current readings: %d ppm, %d°C", co2, temp);
+                co2SensorInitialized = true;
+                return true;
+            }
+            
+            LOG_W("CO2 sensor initialization attempt %d failed, retrying...", i + 1);
+            delay(100);
+        } catch (...) {
+            LOG_E("Exception during CO2 sensor initialization");
+        }
+    }
+    
+    return false;
+}
+
+bool HAL::initPMSensor(int rxPin, int txPin) {
+    LOG_I("Initializing PM sensor...");
+    
+    for (int i = 0; i < MAX_INIT_RETRIES; i++) {
+        try {
+            pmSensor.init(rxPin, txPin);
+            
+            // Test the sensor by reading values
+            uint16_t pm25;
+            if (pmSensor.read(pm25)) {
+                LOG_I("PM sensor initialized. Current PM2.5 reading: %u µg/m³", pm25);
+                pmSensorInitialized = true;
+                return true;
+            }
+            
+            LOG_W("PM sensor initialization attempt %d failed, retrying...", i + 1);
+            delay(100);
+        } catch (...) {
+            LOG_E("Exception during PM sensor initialization");
+        }
+    }
+    
+    return false;
+}
+
+bool HAL::initSoundSensor(int adcPin) {
+    LOG_I("Initializing sound sensor...");
+    
+    try {
+        soundSensor.init(adcPin);
+        
+        // Test the sensor by reading values
+        unsigned int peakToPeak;
+        if (soundSensor.read(peakToPeak)) {
+            LOG_I("Sound sensor initialized. Current reading: %u", peakToPeak);
+            soundSensorInitialized = true;
+            return true;
+        }
+    } catch (...) {
+        LOG_E("Exception during sound sensor initialization");
+    }
+    
+    return false;
+}
+
+TemperatureSensor& HAL::getTemperatureSensor() {
+    if (!tempSensorInitialized) {
+        LOG_W("Accessing uninitialized temperature sensor!");
+    }
+    return tempSensor;
+}
+
+CO2Sensor& HAL::getCO2Sensor() {
+    if (!co2SensorInitialized) {
+        LOG_W("Accessing uninitialized CO2 sensor!");
+    }
+    return co2Sensor;
+}
+
+PMSensor& HAL::getPMSensor() {
+    if (!pmSensorInitialized) {
+        LOG_W("Accessing uninitialized PM sensor!");
+    }
+    return pmSensor;
+}
+
+SoundSensor& HAL::getSoundSensor() {
+    if (!soundSensorInitialized) {
+        LOG_W("Accessing uninitialized sound sensor!");
+    }
+    return soundSensor;
 } 
