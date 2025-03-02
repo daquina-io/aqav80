@@ -50,6 +50,10 @@ void conexion();
 String generateDeviceID();
 int counter = 0;
 
+// Increase keepalive and socket timeout values
+// #define MQTT_KEEPALIVE 60  // Increase from 15 to 60 seconds
+// #define MQTT_SOCKET_TIMEOUT 30  // Increase socket timeout accordingly
+
 WiFiClient espclient;
 PubSubClient mqttClient(espclient);
 DynamicJsonDocument mqtt_data_doc(2048);
@@ -76,6 +80,23 @@ Scheduler runner;
 #define CO2_SAMPLE_TIME 2000
 #define HT_SAMPLE_TIME 15000
 #define SEND_DATA_TIME 15000
+
+// Near other global variables
+unsigned long lastPingTime = 0;          // Last time we sent a ping
+unsigned long lastMessageTime = 0;        // Last time we sent/received any MQTT message
+const unsigned long PING_INTERVAL = 30000;  // Send ping every 30 seconds
+const unsigned long CONNECTION_TIMEOUT = 60000; // Consider connection dead after 60 seconds of no activity
+
+// Add near the top with other globals
+struct {
+    bool otaTrigger = false;
+} subscriptionStatus;
+
+// Add these near other global variables
+const unsigned long WIFI_CHECK_INTERVAL = 10000;  // Check WiFi every 10 seconds
+const unsigned long MAX_RECONNECT_DELAY = 300000; // Max reconnect delay 5 minutes
+unsigned long lastWifiCheck = 0;
+int reconnectAttempts = 0;
 
 // TASKS
 unsigned short int getSoundSamplesAverage(){
@@ -107,8 +128,8 @@ unsigned short int getPmSamplesAverage(){
 }
 void pmSample(){
 #ifdef MOCK_DATA
-  data.PM_AE_UG_2_5 = random(10, 500);
-  v25.push_back(data.PM_AE_UG_2_5);
+  uint16_t pm25 = random(1, 100);
+  v25.push_back(pm25);
 #else
   DMSG("Leyendo PM ... ");
   uint16_t pm25;
@@ -132,7 +153,7 @@ void co2Sample() {
 
     #ifdef MOCK_DATA
     co2 = random(400, 1000);
-    temperature = random(20, 30);
+    vco2.push_back(co2);
     #else
     if (hal.getCO2Sensor().read(co2, temperature)) {
         vco2.push_back(co2);
@@ -148,10 +169,11 @@ void co2Sample() {
 Task co2SampleTask(CO2_SAMPLE_TIME, TASK_FOREVER, &co2Sample);
 
 void htSample() {
-    float temperature, humidity;
+    float temperature;
+    float humidity;
     #ifdef MOCK_DATA
-    temperature = random(20, 30);
-    humidity = random(40, 60);
+    t = random(20, 30);
+    h = random(40, 60);
     #else
     if (hal.getTemperatureSensor().read(temperature, humidity)) {
         t = (unsigned short int)temperature;
@@ -187,16 +209,17 @@ void sendDataFrame(){
   String toSend = "";
   serializeJson(mqtt_data_doc, toSend);
 
-  mqttClient.publish(topic, toSend.c_str());
-
-  // Enviar via mqtt como lo hace ioticos
-  // https://github.com/ioticos/ioticos_god_level_esp32/blob/master/src/main.cpp
+  if (mqttClient.publish(topic, toSend.c_str())) {
+      lastMessageTime = millis();  // Update activity timestamp
+  }
   DMSGln("Enviando datos");
 }
 Task sendDataFrameTask(SEND_DATA_TIME, TASK_FOREVER, &sendDataFrame);
 
 // MQTT message callback
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
+  lastMessageTime = millis();  // Update activity timestamp on receiving message
+  
   Serial.print("Message arrived on topic: ");
   Serial.print(topic);
   Serial.print(". Message: ");
@@ -214,39 +237,96 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   }
 }
 
-//**********************************************************************************
-bool reconnect()
-{
+// Add this new function to check WiFi status
+bool checkWifiConnection() {
+    if (WiFi.status() != WL_CONNECTED) {
+        Serial.println("WiFi connection lost, reconnecting...");
+        WiFi.disconnect();
+        WiFi.reconnect();
+        
+        // Wait up to 10 seconds for reconnection
+        int attempts = 0;
+        while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+            delay(500);
+            attempts++;
+        }
+    }
+    return WiFi.status() == WL_CONNECTED;
+}
 
-  // if (!get_mqtt_credentials())
-  // {
-  //   Serial.println(boldRed + "\n\n      Error getting mqtt credentials :( \n\n RESTARTING IN 10 SECONDS");
-  //   Serial.println(fontReset);
-  //   delay(10000);
-  //   ESP.restart();
-  // }
+// Modify the reconnect function to use exponential backoff
+bool reconnect() {
+    // Calculate delay with exponential backoff
+    unsigned long delay = min(1000UL << reconnectAttempts, MAX_RECONNECT_DELAY);
+    static unsigned long lastAttempt = 0;
+    unsigned long now = millis();
+    
+    if (now - lastAttempt < delay) {
+        return false;  // Too soon to retry
+    }
+    
+    lastAttempt = now;
+    
+    mqttClient.setKeepAlive(MQTT_KEEPALIVE);
+    mqttClient.setSocketTimeout(MQTT_SOCKET_TIMEOUT);
+    
+    String client_id = "esp32-client-";
+    client_id += String(WiFi.macAddress());
+    
+    Serial.printf("Attempting MQTT connection (attempt %d, delay %lums)...\n", 
+                 reconnectAttempts + 1, delay);
+    
+    // MQTT 3.1.1 connection with clean session = false
+    if (mqttClient.connect(client_id.c_str(), mqtt_username, mqtt_password, 
+                          otaStatusTopic,  // Will Topic
+                          1,               // Will QoS
+                          true,            // Will Retain
+                          "device-disconnected", // Will Message
+                          false)) {        // Clean Session
+        Serial.println("Connected to MQTT broker");
+        reconnectAttempts = 0;
+        
+        // Only subscribe if we don't have an existing session
+        if (!subscriptionStatus.otaTrigger) {
+            if (mqttClient.subscribe(otaTriggerTopic)) {
+                subscriptionStatus.otaTrigger = true;
+                Serial.println("Subscribed to OTA trigger topic");
+            }
+        }
+        return true;
+    }
+    
+    Serial.printf("Failed with state %d\n", mqttClient.state());
+    reconnectAttempts = min(reconnectAttempts + 1, 8);
+    return false;
+}
 
-  //Setting up Mqtt Server
-  //conectando a mqtt broker
- mqttClient.setServer(mqtt_broker, mqtt_port);
- mqttClient.setCallback(mqttCallback);
- while (!mqttClient.connected()) {
-     String client_id = "esp32-client-";
-     client_id += String(WiFi.macAddress());
-     Serial.printf("The client %s connects to the public mqtt broker\n", client_id.c_str());
-     if (mqttClient.connect(client_id.c_str(), mqtt_username, mqtt_password)) {
-         Serial.println("Public emqx mqtt broker connected");
-         mqttClient.subscribe(otaTriggerTopic);
-         Serial.println("Subscribed to otaTriggerTopic");
-     } else {
-         Serial.print("failed with state ");
-         Serial.print(mqttClient.state());
-         delay(2000);
-     }
- }
- // publish and subscribe
- //mqttClient.publish(topic, "Hola soy el Esp32 conectado");
-// mqttClient.subscribe(topic);
+// Add near other global variables
+unsigned long lastMqttActivity = 0;
+const unsigned long MQTT_CHECK_INTERVAL = MQTT_KEEPALIVE * 500; // Half the keepalive time in ms
+
+void checkMqttHealth() {
+    unsigned long now = millis();
+
+    // Update last activity time whenever we send any message
+    if (mqttClient.connected()) {
+        // If we haven't sent/received anything for PING_INTERVAL
+        if (now - lastMessageTime > PING_INTERVAL) {
+            Serial.println("Sending keepalive ping...");
+            if (mqttClient.publish(topic, "ping")) {
+                lastPingTime = now;
+                lastMessageTime = now;
+            } else {
+                Serial.println("Failed to send ping");
+            }
+        }
+
+        // If no activity at all for CONNECTION_TIMEOUT
+        if (now - lastMessageTime > CONNECTION_TIMEOUT) {
+            Serial.println("Connection timed out, reconnecting...");
+            mqttClient.disconnect();
+        }
+    }
 }
 
 void setup(){
@@ -318,7 +398,7 @@ void setup(){
   //connectToWifi();
   
   // Initialize HAL instead of individual sensors
-  hal.init();
+  hal.init(TemperatureSensor::SensorType::DHT22);
 
   // setup time
   runner.init();
@@ -339,43 +419,36 @@ void setup(){
  //conectando a mqtt broker
  mqttClient.setServer(mqtt_broker, mqtt_port);
  mqttClient.setCallback(mqttCallback);
- while (!mqttClient.connected()) {
-     String client_id = "esp32-client-";
-     client_id += String(WiFi.macAddress());
-     Serial.printf("The client %s connects to the public mqtt broker\n", client_id.c_str());
-     if (mqttClient.connect(client_id.c_str(), mqtt_username, mqtt_password)) {
-         Serial.println("Public emqx mqtt broker connected");
-          mqttClient.subscribe(otaTriggerTopic);
-         Serial.println("Subscribed to otaTriggerTopic");
-     } else {
-         Serial.print("failed with state ");
-        Serial.print(mqttClient.state());
-         delay(2000);
-     }
+ 
+ if (reconnect()) {
+     Serial.println("Initial MQTT connection successful");
+ } else {
+     Serial.println("Initial MQTT connection failed, will retry in loop");
  }
- // publish and subscribe
- //mqttClient.publish(topic, "Hola soy el Esp32 conectado");
- //mqttClient.subscribe(topic);
 }
 
 void loop(){
-  conexion();
-  if (!mqttClient.connected())
-  {
-
-    long now = millis();
-
-    if (now - lastReconnectAttemp > 5000)
-    {
-      lastReconnectAttemp = millis();
-      if (reconnect())
-      {
-        lastReconnectAttemp = 0;
+  unsigned long now = millis();
+  
+  // Periodic WiFi check
+  if (now - lastWifiCheck > WIFI_CHECK_INTERVAL) {
+      lastWifiCheck = now;
+      if (!checkWifiConnection()) {
+          Serial.println("WiFi connection failed");
+          return;  // Skip the rest of the loop if WiFi is down
       }
-    }
+  }
+  
+  if (mqttClient.connected()) {
+      mqttClient.loop();
+      checkMqttHealth();
+      runner.execute();
   } else {
-    mqttClient.loop();
-    runner.execute(); 
+      // Let reconnect() handle the delay
+      if (reconnect()) {
+          lastMessageTime = now;
+          lastPingTime = now;
+      }
   }
 }
 
@@ -495,24 +568,24 @@ class MbedContexts {
   client = firmwareHttp.getStreamPtr();
   t_httpUpdate_return ret = httpUpdate.update(*client, firmwareUrl);
 
-  switch (ret) {
-    case HTTP_UPDATE_FAILED:
-      Serial.printf("HTTP_UPDATE_FAILED Error (%d): %s\n", 
-                   httpUpdate.getLastError(),
-                   httpUpdate.getLastErrorString().c_str());
+    switch (ret) {
+      case HTTP_UPDATE_FAILED:
+        Serial.printf("HTTP_UPDATE_FAILED Error (%d): %s\n",
+                      httpUpdate.getLastError(),
+                      httpUpdate.getLastErrorString().c_str());
       mqttClient.publish(otaStatusTopic, "OTA update failed");
-      break;
+        break;
 
-    case HTTP_UPDATE_NO_UPDATES:
-      Serial.println("HTTP_UPDATE_NO_UPDATES");
+      case HTTP_UPDATE_NO_UPDATES:
+        Serial.println("HTTP_UPDATE_NO_UPDATES");
       mqttClient.publish(otaStatusTopic, "No updates available");
-      break;
+        break;
 
-    case HTTP_UPDATE_OK:
-      Serial.println("HTTP_UPDATE_OK");
+      case HTTP_UPDATE_OK:
+        Serial.println("HTTP_UPDATE_OK");
       mqttClient.publish(otaStatusTopic, "OTA update successful");
-      break;
-  }
+        break;
+    }
 }
 
 String generateDeviceID() {

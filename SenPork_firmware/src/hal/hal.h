@@ -13,7 +13,7 @@ public:
         return instance;
     }
 
-    void init();
+    void init(TemperatureSensor::SensorType tempSensorType = TemperatureSensor::SensorType::DHT22);
     void update();
 
     TemperatureSensor& getTemperatureSensor() { return tempSensor; }
