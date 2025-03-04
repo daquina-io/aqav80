@@ -1,16 +1,12 @@
 #include "data_manager.h"
+#include "utils/task_manager.h"
 
 // Initialize static member
 DataManager* DataManager::instance = nullptr;
 
-
 DataManager::DataManager() : 
     dataDoc(2048),
-    soundSampleTask(SOUND_SAMPLE_TIME, TASK_FOREVER, &soundSampleCallback),
-    pmSampleTask(PM_SAMPLE_TIME, TASK_FOREVER, &pmSampleCallback),
-    co2SampleTask(CO2_SAMPLE_TIME, TASK_FOREVER, &co2SampleCallback),
-    htSampleTask(HT_SAMPLE_TIME, TASK_FOREVER, &htSampleCallback),
-    sendDataFrameTask(SEND_DATA_TIME, TASK_FOREVER, &sendDataFrameCallback),
+    scheduler(nullptr),
     hal(nullptr),
     mqttDataTopic(nullptr),
     humidity(0),
@@ -19,20 +15,20 @@ DataManager::DataManager() :
     instance = this;
 }
 
-void DataManager::init(HAL& halInstance, const char* dataTopic) {
+void DataManager::init(HAL& halInstance, const char* dataTopic, Scheduler& taskRunner) {
     hal = &halInstance;
     mqttDataTopic = dataTopic;
+    scheduler = &taskRunner;
     
-    taskRunner.init();
     setupTasks();
 }
 
 void DataManager::setupTasks() {
-    taskRunner.addTask(soundSampleTask);
-    taskRunner.addTask(pmSampleTask);
-    taskRunner.addTask(htSampleTask);
-    taskRunner.addTask(co2SampleTask);
-    taskRunner.addTask(sendDataFrameTask);
+    scheduler->addTask(soundSampleTask);
+    scheduler->addTask(pmSampleTask);
+    scheduler->addTask(htSampleTask);
+    scheduler->addTask(co2SampleTask);
+    scheduler->addTask(sendDataFrameTask);
     
     soundSampleTask.enable();
     pmSampleTask.enable();
@@ -42,7 +38,8 @@ void DataManager::setupTasks() {
 }
 
 void DataManager::loop() {
-    taskRunner.execute();
+    // Let the main loop execute the scheduler
+    // scheduler->execute();
 }
 
 // Static task callbacks
@@ -163,8 +160,8 @@ void DataManager::createDataFrame() {
     serializeJson(dataDoc, dataString);
     
     if (networkManager.publishMessage(mqttDataTopic, dataString.c_str())) {
-        Serial.println("Data frame sent successfully");
+        LOG_I("Data frame sent successfully");
     } else {
-        Serial.println("Failed to send data frame");
+        LOG_E("Failed to send data frame");
     }
 } 

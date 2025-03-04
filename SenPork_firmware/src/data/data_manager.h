@@ -5,13 +5,14 @@
 #include <numeric>
 #include <ArduinoJson.h>
 
-#include <TaskScheduler.h>      
+// Use the full TaskScheduler.h to get proper implementations
+#include <TaskScheduler.h>
 
 #include "hal/hal.h"
 #include "network/network_manager.h"
 
-// TaskScheduler
-Scheduler taskRunner;
+// Remove the global taskRunner declaration
+// Scheduler taskRunner;
 
 class DataManager {
 public:
@@ -20,7 +21,7 @@ public:
         return instance;
     }
     
-    void init(HAL& hal, const char* dataTopic);
+    void init(HAL& hal, const char* dataTopic, Scheduler& scheduler);
     void setupTasks();
     void loop();
     
@@ -53,11 +54,38 @@ private:
     DynamicJsonDocument dataDoc;
     
     // Task scheduler
-    Task soundSampleTask;
-    Task pmSampleTask;
-    Task co2SampleTask;
-    Task htSampleTask;
-    Task sendDataFrameTask;
+    Scheduler* scheduler;
+    
+    // Define proper task classes that derive from Task
+    class SoundSampleTask : public Task {
+        public:
+            SoundSampleTask() : Task(SOUND_SAMPLE_TIME, TASK_FOREVER) {}
+            bool Callback() override { soundSampleCallback(); return true; }
+    } soundSampleTask;
+    
+    class PMSampleTask : public Task {
+        public:
+            PMSampleTask() : Task(PM_SAMPLE_TIME, TASK_FOREVER) {}
+            bool Callback() override { pmSampleCallback(); return true; }
+    } pmSampleTask;
+    
+    class CO2SampleTask : public Task {
+        public:
+            CO2SampleTask() : Task(CO2_SAMPLE_TIME, TASK_FOREVER) {}
+            bool Callback() override { co2SampleCallback(); return true; }
+    } co2SampleTask;
+    
+    class HTSampleTask : public Task {
+        public:
+            HTSampleTask() : Task(HT_SAMPLE_TIME, TASK_FOREVER) {}
+            bool Callback() override { htSampleCallback(); return true; }
+    } htSampleTask;
+    
+    class SendDataFrameTask : public Task {
+        public:
+            SendDataFrameTask() : Task(SEND_DATA_TIME, TASK_FOREVER) {}
+            bool Callback() override { sendDataFrameCallback(); return true; }
+    } sendDataFrameTask;
     
     // References to other subsystems
     HAL* hal;
