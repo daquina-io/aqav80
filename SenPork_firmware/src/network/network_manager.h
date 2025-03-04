@@ -4,6 +4,7 @@
 #include <WiFi.h>
 #include <WiFiManager.h>
 #include <PubSubClient.h>
+#include "utils/logger.h"
 
 class NetworkManager {
 public:
@@ -12,9 +13,9 @@ public:
         return instance;
     }
 
-    bool initWiFi(unsigned long timeout = 180);
+    bool initWiFi(int timeoutSeconds = 60);
     bool initMQTT(const char* broker, int port, const char* username, const char* password);
-    bool publishMessage(const char* topic, const char* message);
+    bool publishMessage(const char* topic, const char* payload);
     bool subscribe(const char* topic);
     void loop();
     bool isConnected() { return mqttClient.connected(); }
@@ -25,14 +26,25 @@ private:
     NetworkManager(const NetworkManager&) = delete;
     NetworkManager& operator=(const NetworkManager&) = delete;
     
+    bool reconnectWiFi(int maxRetries = 3);
     bool reconnectMQTT();
     
     WiFiClient wifiClient;
     PubSubClient mqttClient;
-    unsigned long lastReconnectAttempt;
     
     const char* mqttBroker;
     int mqttPort;
     const char* mqttUsername;
     const char* mqttPassword;
+    
+    unsigned long lastReconnectAttempt;
+    unsigned long lastWiFiReconnectAttempt;
+    
+    int mqttReconnectCount;
+    int wifiReconnectCount;
+    
+    const int MAX_WIFI_RETRIES = 3;
+    const int MAX_MQTT_RETRIES = 5;
+    const int WIFI_RECONNECT_INTERVAL = 30000;  // 30 seconds
+    const int MQTT_RECONNECT_INTERVAL = 5000;   // 5 seconds
 }; 

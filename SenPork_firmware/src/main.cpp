@@ -1,13 +1,14 @@
 #include <Arduino.h>
 #include <Preferences.h>
 
+#include "utils/task_manager.h"
+#include "utils/config_manager.h"
 #include "network/network_manager.h"
 #include "ota/ota_manager.h"
 #include "data/data_manager.h"
 #include "hal/hal.h"
 #include "utils/logger.h"
 #include "public_key.h"
-#include "variables.h"
 
 // Global preferences
 Preferences preferences;
@@ -22,9 +23,9 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     LOG_I("MQTT message on topic %s: %s", topic, message.c_str());
 
     // Check if the message is to trigger OTA update
-    if (String(topic) == otaTriggerTopic && message == "start") {
+    if (String(topic) == Config().getOtaTriggerTopic() && message == "start") {
         LOG_I("OTA update triggered via MQTT");
-        NetworkManager::getInstance().publishMessage(otaStatusTopic, "OTA update started");
+        NetworkManager::getInstance().publishMessage(Config().getOtaStatusTopic(), "OTA update started");
         OTAManager::getInstance().performUpdate();
     }
 }
@@ -85,7 +86,11 @@ void setup() {
     int mqttRetries = 0;
     const int MAX_MQTT_RETRIES = 3;
     
-    while (!networkManager.initMQTT(mqtt_broker, mqtt_port, mqtt_username, mqtt_password) && 
+    while (!networkManager.initMQTT(
+            Config().getMqttBroker(), 
+            Config().getMqttPort(), 
+            Config().getMqttUsername(), 
+            Config().getMqttPassword()) && 
            mqttRetries < MAX_MQTT_RETRIES) {
         mqttRetries++;
         LOG_W("MQTT connection attempt %d failed, retrying...", mqttRetries);
@@ -97,29 +102,40 @@ void setup() {
         // Continue without MQTT - we'll retry in the loop
     } else {
         networkManager.setCallback(mqttCallback);
-        if (!networkManager.subscribe(otaTriggerTopic)) {
+        if (!networkManager.subscribe(Config().getOtaTriggerTopic())) {
             LOG_W("Failed to subscribe to OTA trigger topic");
         }
     }
     
     // Initialize OTA
     OTAManager& otaManager = OTAManager::getInstance();
-    otaManager.init(public_key_der, public_key_der_len, firmwareUrl, firmwareSigUrl, otaStatusTopic);
+    otaManager.init(
+        public_key_der, 
+        public_key_der_len, 
+        Config().getFirmwareUrl(), 
+        Config().getFirmwareSigUrl(), 
+        Config().getOtaStatusTopic()
+    );
     
-    // Initialize Data Manager with error handling
-    DataManager& dataManager = DataManager::getInstance();
-    dataManager.init(hal, topic);
+    // Initialize TaskScheduler through TaskManager
+    TaskManager::getInstance().init();
+    
+    // Pass scheduler to DataManager
+    DataManager::getInstance().init(hal, Config().getDataTopic(), TaskManager::getInstance().getScheduler());
     
     LOG_I("Setup completed successfully");
 }
 
 void loop() {
+    // Execute the scheduler in the main loop
+    TaskManager::getInstance().execute();
+    
     try {
         // Handle network operations with error recovery
         NetworkManager::getInstance().loop();
         
-        // Handle data collection and processing
-        DataManager::getInstance().loop();
+        // DataManager no longer needs to call execute() since we're doing it in the main loop
+        // DataManager::getInstance().loop();
     } catch (const std::exception& e) {
         LOG_E("Exception in main loop: %s", e.what());
     } catch (...) {
