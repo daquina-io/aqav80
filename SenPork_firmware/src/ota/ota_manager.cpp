@@ -37,6 +37,7 @@ bool OTAManager::performUpdate() {
     // Download signature
     HTTPClient sigHttp;
     sigHttp.begin(signatureUrl);
+    sigHttp.setTimeout(30000);
     int httpCode = sigHttp.GET();
     if (httpCode != HTTP_CODE_OK) {
         LOG_E("Failed to download signature");
@@ -71,6 +72,7 @@ bool OTAManager::performUpdate() {
     // Download and verify firmware
     HTTPClient firmwareHttp;
     firmwareHttp.begin(firmwareUrl);
+    firmwareHttp.setTimeout(60000);
     httpCode = firmwareHttp.GET();
     if (httpCode != HTTP_CODE_OK) {
         LOG_E("Failed to start firmware download");
@@ -79,7 +81,8 @@ bool OTAManager::performUpdate() {
     }
 
     WiFiClient* client = firmwareHttp.getStreamPtr();
-    const size_t bufSize = 1024;
+    client->setTimeout(60000);
+    const size_t bufSize = 4096;
     std::unique_ptr<uint8_t[]> buf(new uint8_t[bufSize]);
     if (!buf) {
         LOG_E("Failed to allocate buffer");
@@ -89,17 +92,48 @@ bool OTAManager::performUpdate() {
 
     int totalBytes = firmwareHttp.getSize();
     int remainingBytes = totalBytes;
+    int lastProgress = 0;
+    int maxRetries = 3;
+    unsigned long lastReadTime = 0;
+    unsigned long progressReportInterval = 5000;
+    unsigned long lastProgressReport = 0;
+
+    LOG_I("Starting firmware download (%d bytes)", totalBytes);
+    networkManager.publishMessage(statusTopic, String("Downloading firmware: 0%").c_str());
 
     mbedtls_md_starts(&contexts.mdContext);
 
     // Hash the firmware
     while (remainingBytes > 0) {
+        unsigned long now = millis();
+        int progress = ((totalBytes - remainingBytes) * 100) / totalBytes;
+        if (progress >= lastProgress + 10 || now - lastProgressReport > progressReportInterval) {
+            lastProgress = progress;
+            lastProgressReport = now;
+            LOG_I("Download progress: %d%%", progress);
+            networkManager.publishMessage(statusTopic, String("Downloading firmware: " + String(progress) + "%").c_str());
+            delay(10);
+        }
+
         size_t bytesToRead = remainingBytes > bufSize ? bufSize : remainingBytes;
-        size_t bytesRead = client->readBytes(buf.get(), bytesToRead);
+        size_t bytesRead = 0;
+        int retries = 0;
+        
+        while (bytesRead == 0 && retries < maxRetries) {
+            yield();
+            bytesRead = client->readBytes(buf.get(), bytesToRead);
+            lastReadTime = millis();
+            
+            if (bytesRead == 0) {
+                retries++;
+                LOG_W("Read retry %d/%d", retries, maxRetries);
+                delay(100 * retries);
+            }
+        }
         
         if (bytesRead == 0) {
-            LOG_E("Read timeout");
-            networkManager.publishMessage(statusTopic, "Firmware read timeout");
+            LOG_E("Read timeout after %d retries", maxRetries);
+            networkManager.publishMessage(statusTopic, "Firmware read timeout after retries");
             return false;
         }
 
@@ -107,6 +141,9 @@ bool OTAManager::performUpdate() {
         remainingBytes -= bytesRead;
     }
 
+    LOG_I("Download complete: 100%%");
+    networkManager.publishMessage(statusTopic, "Download complete");
+    
     uint8_t hash[32];
     mbedtls_md_finish(&contexts.mdContext, hash);
 
@@ -124,7 +161,13 @@ bool OTAManager::performUpdate() {
 
     // Perform update
     firmwareHttp.begin(firmwareUrl);
+    firmwareHttp.setTimeout(120000);
     client = firmwareHttp.getStreamPtr();
+    client->setTimeout(120000);
+    
+    LOG_I("Starting firmware installation...");
+    networkManager.publishMessage(statusTopic, "Installing firmware");
+    
     t_httpUpdate_return ret = httpUpdate.update(*client, firmwareUrl);
 
     switch (ret) {

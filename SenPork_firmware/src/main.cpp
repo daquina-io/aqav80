@@ -15,14 +15,14 @@ Preferences preferences;
 
 // MQTT message callback
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
-    String message;
-    for (int i = 0; i < length; i++) {
-        message += (char)payload[i];
-    }
+  String message;
+  for (int i = 0; i < length; i++) {
+    message += (char)payload[i];
+  }
     
     LOG_I("MQTT message on topic %s: %s", topic, message.c_str());
 
-    // Check if the message is to trigger OTA update
+  // Check if the message is to trigger OTA update
     if (String(topic) == Config().getOtaTriggerTopic() && message == "start") {
         LOG_I("OTA update triggered via MQTT");
         NetworkManager::getInstance().publishMessage(Config().getOtaStatusTopic(), "OTA update started");
@@ -100,7 +100,7 @@ void setup() {
     if (mqttRetries >= MAX_MQTT_RETRIES) {
         LOG_E("Failed to connect to MQTT broker after %d attempts", MAX_MQTT_RETRIES);
         // Continue without MQTT - we'll retry in the loop
-    } else {
+            } else {
         networkManager.setCallback(mqttCallback);
         if (!networkManager.subscribe(Config().getOtaTriggerTopic())) {
             LOG_W("Failed to subscribe to OTA trigger topic");
