@@ -10,41 +10,45 @@ HAL::HAL() :
 }
 
 bool HAL::init() {
-    LOG_I("Initializing sensors...");
+    LOG_I("Initializing HAL...");
+    bool success = true;
     
-    bool allInitialized = true;
-    
-    // Initialize temperature sensor with retries
-    if (!initTemperatureSensor(BoardPins::I2C_SDA, BoardPins::I2C_SCL)) {
-        LOG_E("Failed to initialize temperature sensor!");
-        allInitialized = false;
+    // Initialize temperature sensor with auto-detection
+    if (!initTemperatureSensor(BoardPins::DHT_PIN, BoardPins::I2C_SCL)) {
+        LOG_W("Failed to initialize temperature sensor");
+        sensorStatus &= ~SENSOR_TEMPERATURE;
+        tempSensorInitialized = false;
+        success = false;
+    } else {
+        sensorStatus |= SENSOR_TEMPERATURE;
+        tempSensorInitialized = true;
     }
     
     // Initialize CO2 sensor with retries
     if (!initCO2Sensor(BoardPins::CO2_RX, BoardPins::CO2_TX, Serial2)) {
         LOG_E("Failed to initialize CO2 sensor!");
-        allInitialized = false;
+        success = false;
     }
     
     // Initialize PM sensor with retries
     if (!initPMSensor(BoardPins::PM_RX, BoardPins::PM_TX)) {
         LOG_E("Failed to initialize PM sensor!");
-        allInitialized = false;
+        success = false;
     }
     
     // Initialize sound sensor
     if (!initSoundSensor(BoardPins::ADC_SOUND)) {
         LOG_E("Failed to initialize sound sensor!");
-        allInitialized = false;
+        success = false;
     }
     
-    if (allInitialized) {
+    if (success) {
         LOG_I("All sensors initialized successfully");
     } else {
         LOG_W("Some sensors failed to initialize");
     }
     
-    return allInitialized;
+    return success;
 }
 
 bool HAL::isSensorInitialized(SensorType sensor) {
@@ -57,19 +61,23 @@ bool HAL::isSensorInitialized(SensorType sensor) {
     }
 }
 
-bool HAL::initTemperatureSensor(int sdaPin, int sclPin) {
+bool HAL::initTemperatureSensor(int dhtPin, int sclPin) {
     LOG_I("Initializing temperature sensor...");
+    
+    // Use the default I2C SDA pin from the board definition
+    int sdaPin = BoardPins::I2C_SDA;
     
     for (int i = 0; i < MAX_INIT_RETRIES; i++) {
         try {
-            tempSensor.init(sdaPin, sclPin);
-            
-            // Test the sensor by reading values
-            float temp, humidity;
-            if (tempSensor.read(temp, humidity)) {
-                LOG_I("Temperature sensor initialized. Current readings: %.1f°C, %.1f%%", temp, humidity);
-                tempSensorInitialized = true;
-                return true;
+            // Auto-detect sensor type
+            if (tempSensor.init(dhtPin, sclPin, TemperatureSensor::SensorType::NONE, true)) {
+                // Test the sensor
+                float temp, humidity;
+                if (tempSensor.read(temp, humidity)) {
+                    LOG_I("Temperature sensor initialized successfully: %.1f°C, %.1f%%", temp, humidity);
+                    tempSensorInitialized = true;
+                    return true;
+                }
             }
             
             LOG_W("Temperature sensor initialization attempt %d failed, retrying...", i + 1);
@@ -153,13 +161,6 @@ bool HAL::initSoundSensor(int adcPin) {
     return false;
 }
 
-TemperatureSensor& HAL::getTemperatureSensor() {
-    if (!tempSensorInitialized) {
-        LOG_W("Accessing uninitialized temperature sensor!");
-    }
-    return tempSensor;
-}
-
 CO2Sensor& HAL::getCO2Sensor() {
     if (!co2SensorInitialized) {
         LOG_W("Accessing uninitialized CO2 sensor!");
@@ -179,4 +180,11 @@ SoundSensor& HAL::getSoundSensor() {
         LOG_W("Accessing uninitialized sound sensor!");
     }
     return soundSensor;
+}
+
+TemperatureSensor& HAL::getTemperatureSensor() {
+    if (!tempSensorInitialized) {
+        LOG_W("Accessing uninitialized temperature sensor!");
+    }
+    return tempSensor;
 } 

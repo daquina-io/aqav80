@@ -28,13 +28,13 @@ public:
     bool isSensorInitialized(SensorType sensor);
     
     // Initialize specific sensors, returns true if successful
-    bool initTemperatureSensor(int sdaPin, int sclPin);
+    bool initTemperatureSensor(int dhtPin, int sclPin);
     bool initCO2Sensor(int rxPin, int txPin, HardwareSerial& serial);
     bool initPMSensor(int rxPin, int txPin);
     bool initSoundSensor(int adcPin);
 
     // Getters with initialization check
-    TemperatureSensor& getTemperatureSensor(); 
+    TemperatureSensor& getTemperatureSensor();
     CO2Sensor& getCO2Sensor();
     PMSensor& getPMSensor();
     SoundSensor& getSoundSensor();
@@ -55,4 +55,6 @@ private:
     bool soundSensorInitialized;
     
     const int MAX_INIT_RETRIES = 3;
+    
+    uint8_t sensorStatus = 0;  // Bitmap to track sensor status
 }; 
