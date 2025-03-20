@@ -30,18 +30,6 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     }
 }
 
-// Generate device ID from MAC address
-String generateDeviceID() {
-    uint8_t mac[6];
-    esp_read_mac(mac, ESP_MAC_WIFI_STA);
-    
-    char macStr[18];
-    snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X", 
-             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-    
-    return String(macStr);
-}
-
 void setup() {
     // Initialize logger first
     Logger::getInstance().begin(115200, LOG_DEBUG);
@@ -51,7 +39,7 @@ void setup() {
     preferences.begin("device", false);
     String deviceID = preferences.getString("deviceID", "");
     if (deviceID == "") {
-        deviceID = generateDeviceID();
+        deviceID = NetworkManager::getInstance().generateDeviceID();
         preferences.putString("deviceID", deviceID);
         LOG_I("New Device ID Generated and Saved: %s", deviceID.c_str());
     } else {
@@ -141,4 +129,7 @@ void loop() {
     } catch (...) {
         LOG_E("Unknown exception in main loop");
     }
+    
+    // Run HAL update to check sensor status
+    HAL::getInstance().update();
 }

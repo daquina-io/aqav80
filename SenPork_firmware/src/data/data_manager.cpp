@@ -80,7 +80,7 @@ void DataManager::co2SampleCallback() {
         if (instance->hal->isSensorInitialized(SENSOR_CO2)) {
             int co2;
             int8_t temp;
-            if (instance->hal->getCO2Sensor().readWithRetry(co2, temp, 3, 200)) {
+            if (instance->hal->getCO2Sensor().readWithRetry(co2, temp, 5, 500)) {
                 instance->co2Samples.push_back(co2);
                 LOG_D("CO2: %d ppm, Temperature: %d°C", co2, temp);
             } else {

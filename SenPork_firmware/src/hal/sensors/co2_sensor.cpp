@@ -9,18 +9,32 @@ bool CO2Sensor::init(int rxPin, int txPin, HardwareSerial& serial) {
         mhz19.begin(*serialPort);
         mhz19.autoCalibration();
         
-        // Test if the sensor is responding
-        int co2 = mhz19.getCO2();
-        int8_t temp = mhz19.getTemperature();
+        // Allow sensor to warm up before first reading
+        LOG_I("Allowing CO2 sensor to warm up (3 seconds)...");
+        delay(3000);
         
-        if (co2 > 0) {
-            LOG_I("CO2 sensor initialized. Initial readings: %d ppm, %d°C", co2, temp);
-            initialized = true;
-            return true;
-        } else {
-            LOG_W("CO2 sensor returned invalid initial reading");
-            return false;
+        // Test if the sensor is responding
+        int retries = 5;
+        int co2 = 0;
+        int8_t temp = 0;
+        
+        while (retries > 0) {
+            co2 = mhz19.getCO2();
+            temp = mhz19.getTemperature();
+            
+            if (co2 > 0) {
+                LOG_I("CO2 sensor initialized. Initial readings: %d ppm, %d°C", co2, temp);
+                initialized = true;
+                return true;
+            } else {
+                LOG_W("CO2 sensor returned invalid initial reading, retrying... (%d attempts left)", retries);
+                retries--;
+                delay(1000); // Wait 1 second between retries
+            }
         }
+        
+        LOG_W("CO2 sensor initialization failed after multiple attempts");
+        return false;
     } catch (...) {
         LOG_E("Exception during CO2 sensor initialization");
         return false;
@@ -42,6 +56,10 @@ bool CO2Sensor::read(int& co2, int8_t& temperature) {
         if (co2 > 0 && co2 < 10000) {  // Reasonable CO2 range
             LOG_V("CO2 reading: %d ppm, temperature: %d°C", co2, temperature);
             return true;
+        } else {
+            LOG_W("CO2 sensor returned invalid reading: %d ppm, %d°C", co2, temperature);
+            mhz19.verify();
+            mhz19.recoveryReset();
         }
         
         // Short delay before retry

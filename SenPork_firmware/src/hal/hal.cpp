@@ -6,7 +6,9 @@ HAL::HAL() :
     tempSensorInitialized(false),
     co2SensorInitialized(false),
     pmSensorInitialized(false),
-    soundSensorInitialized(false) {
+    soundSensorInitialized(false),
+    co2SensorVerified(false),
+    verifyCO2SensorTimestamp(0) {
 }
 
 bool HAL::init() {
@@ -28,6 +30,9 @@ bool HAL::init() {
     if (!initCO2Sensor(BoardPins::CO2_RX, BoardPins::CO2_TX, Serial2)) {
         LOG_E("Failed to initialize CO2 sensor!");
         success = false;
+    } else {
+        // Schedule CO2 sensor verification is now done in initCO2Sensor
+        LOG_I("CO2 sensor initialized successfully, verification will occur in 30 seconds");
     }
     
     // Initialize PM sensor with retries
@@ -49,6 +54,45 @@ bool HAL::init() {
     }
     
     return success;
+}
+
+// This method should be called regularly in the main loop
+void HAL::update() {
+    // Remove excessive logging that could flood the serial console
+    if (co2SensorInitialized && !co2SensorVerified) {
+        // Log only once during startup, not continuously
+        static bool loggedOnce = false;
+        if (!loggedOnce) {
+            LOG_I("CO2 sensor verification status: verified=%d, timestamp=%lu, current=%lu, diff=%lu", 
+                co2SensorVerified, verifyCO2SensorTimestamp, millis(), millis() - verifyCO2SensorTimestamp);
+            loggedOnce = true;
+        }
+        
+        // Check if it's time to verify (30 seconds from initialization)
+        if (verifyCO2SensorTimestamp > 0 && millis() - verifyCO2SensorTimestamp >= 30000) {
+            LOG_I("30 seconds elapsed since CO2 sensor init, performing verification now");
+            verifyCO2Sensor();
+        }
+    }
+}
+
+void HAL::verifyCO2Sensor() {
+    LOG_I("Verifying CO2 sensor readings after warmup period...");
+    
+    int co2Value;
+    int8_t temperature;
+    bool readSuccess = co2Sensor.readWithRetry(co2Value, temperature, 3, 1000);
+    
+    if (!readSuccess || co2Value == 0) {
+        LOG_E("CO2 sensor verification failed! Readings still at 0 ppm after 30 seconds. Restarting device...");
+        delay(1000); // Brief delay to allow log to be sent
+        // Restart the ESP32
+        ESP.restart();
+        return;
+    }
+    
+    LOG_I("CO2 sensor verification successful! Current readings: %d ppm, %d°C", co2Value, temperature);
+    co2SensorVerified = true;
 }
 
 bool HAL::isSensorInitialized(SensorType sensor) {
@@ -95,15 +139,21 @@ bool HAL::initCO2Sensor(int rxPin, int txPin, HardwareSerial& serial) {
     
     for (int i = 0; i < MAX_INIT_RETRIES; i++) {
         try {
-            co2Sensor.init(rxPin, txPin, serial);
-            
-            // Test the sensor by reading values
-            int co2;
-            int8_t temp;
-            if (co2Sensor.read(co2, temp)) {
-                LOG_I("CO2 sensor initialized. Current readings: %d ppm, %d°C", co2, temp);
-                co2SensorInitialized = true;
-                return true;
+            if (co2Sensor.init(rxPin, txPin, serial)) {
+                // Test the sensor by reading values
+                int co2;
+                int8_t temp;
+                if (co2Sensor.readWithRetry(co2, temp, 5, 500)) {
+                    LOG_I("CO2 sensor initialized. Current readings: %d ppm, %d°C", co2, temp);
+                    co2SensorInitialized = true;
+                    co2SensorVerified = false;
+                    
+                    // Set the verification timestamp HERE, when we know initialization succeeded
+                    verifyCO2SensorTimestamp = millis();
+                    LOG_I("CO2 sensor verification scheduled in 30 seconds (timestamp: %lu)", verifyCO2SensorTimestamp);
+                    
+                    return true;
+                }
             }
             
             LOG_W("CO2 sensor initialization attempt %d failed, retrying...", i + 1);

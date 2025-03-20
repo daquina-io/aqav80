@@ -24,6 +24,9 @@ public:
     // Initialize all sensors, returns true if all sensors initialized successfully
     bool init();
     
+    // Update method - should be called regularly in the main loop
+    void update();
+    
     // Check sensor initialization status
     bool isSensorInitialized(SensorType sensor);
     
@@ -44,6 +47,9 @@ private:
     HAL(const HAL&) = delete; // Delete copy constructor
     HAL& operator=(const HAL&) = delete; // Delete assignment operator
     
+    // CO2 sensor verification function
+    void verifyCO2Sensor();
+    
     TemperatureSensor tempSensor;
     CO2Sensor co2Sensor;
     PMSensor pmSensor;
@@ -53,6 +59,9 @@ private:
     bool co2SensorInitialized;
     bool pmSensorInitialized;
     bool soundSensorInitialized;
+    bool co2SensorVerified;
+    
+    unsigned long verifyCO2SensorTimestamp;
     
     const int MAX_INIT_RETRIES = 3;
     
