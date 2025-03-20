@@ -1,6 +1,18 @@
 #include "network_manager.h"
 #include "utils/config_manager.h"
 
+// Generate device ID from MAC address
+String NetworkManager::generateDeviceID() {
+    uint8_t mac[6];
+    esp_read_mac(mac, ESP_MAC_WIFI_STA);
+    
+    char macStr[18];
+    snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X", 
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    
+    return String(macStr);
+}
+
 NetworkManager::NetworkManager() : 
     mqttClient(wifiClient),
     mqttBroker(nullptr),
@@ -14,6 +26,7 @@ NetworkManager::NetworkManager() :
 }
 
 bool NetworkManager::initWiFi(int timeoutSeconds) {
+    // TODO: https://supakeen.com/weblog/esp32-wifi-superstitions/
     LOG_I("Connecting to WiFi");
     WiFi.mode(WIFI_STA);
     pinMode(LED_BUILTIN, OUTPUT);
@@ -129,8 +142,8 @@ bool NetworkManager::reconnectMQTT() {
         LOG_I("Attempting MQTT connection...");
         
         // Create a random client ID
-        String clientId = "ESP32Client-";
-        clientId += String(random(0xffff), HEX);
+        String clientId = "aqa-sp-";
+        clientId += String(generateDeviceID());
         
         // Attempt to connect
         bool connected = false;

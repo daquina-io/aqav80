@@ -20,6 +20,7 @@ public:
     void loop();
     bool isConnected() { return mqttClient.connected(); }
     void setCallback(void (*callback)(char*, byte*, unsigned int));
+    String generateDeviceID();
 
 private:
     NetworkManager();
