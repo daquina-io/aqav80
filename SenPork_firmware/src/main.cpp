@@ -47,12 +47,6 @@ void setup() {
     }
     preferences.end();
     
-    // Initialize HAL with improved error handling
-    HAL& hal = HAL::getInstance();
-    if (!hal.init()) {
-        LOG_W("Some sensors failed to initialize, continuing with limited functionality");
-    }
-    
     // Initialize Network with timeout and retry
     NetworkManager& networkManager = NetworkManager::getInstance();
     int wifiRetries = 0;
@@ -83,6 +77,12 @@ void setup() {
         mqttRetries++;
         LOG_W("MQTT connection attempt %d failed, retrying...", mqttRetries);
         delay(1000);
+    }
+    
+     // Initialize HAL with improved error handling
+    HAL& hal = HAL::getInstance();
+    if (!hal.init()) {
+        LOG_W("Some sensors failed to initialize, continuing with limited functionality");
     }
     
     if (mqttRetries >= MAX_MQTT_RETRIES) {

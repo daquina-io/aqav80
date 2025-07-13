@@ -112,3 +112,199 @@ especificando el tipo de sesnor "aqav80" seria :
 
  * irc --> #un/loquer en irc.freenode.net
  * twitter --> [twitter de unloquer](https://twitter.com/unloquer?lang=es) enlace a https://twitter.com/unloquer?lang=es
+
+# SenPork Firmware
+
+Environmental sensor firmware for the SenPork project.
+
+## Features
+
+- **Multiple CO2 Sensor Support**: Supports both MHZ19 and SenseAir S8 CO2 sensors with automatic detection
+- **Multi-sensor monitoring**: Temperature, humidity, PM2.5, sound level, and CO2 measurements
+- **WiFi connectivity** with automatic configuration
+- **MQTT data publishing** for real-time monitoring
+- **OTA firmware updates** with cryptographic signature verification
+- **Task-based architecture** for efficient sensor sampling
+- **Comprehensive logging** with configurable levels
+
+## Supported Sensors
+
+### CO2 Sensors
+- **MHZ19**: Winsen MH-Z19 series CO2 sensors
+- **SenseAir S8**: SenseAir S8 LP CO2 sensors with advanced autocalibration features
+
+The firmware supports automatic detection of CO2 sensor types. If you need to specify a particular sensor type, you can configure it in the HAL initialization.
+
+#### SenseAir S8 Autocalibration Features
+- **Automatic Background Calibration (ABC)**: Continuously calibrates to outdoor air levels (400 ppm) over a 7-day period
+- **Zero Point Calibration**: Manual calibration to fresh outdoor air (400 ppm)  
+- **Span Calibration**: Manual calibration to known CO2 concentrations
+- **Configurable calibration periods**: Set ABC period from hours to weeks
+
+### Other Sensors
+- **Temperature/Humidity**: SHT40 (I2C) or DHT22 (digital) with auto-detection
+- **Particulate Matter**: PMS series sensors (PM2.5)
+- **Sound Level**: Analog microphone sensors
+
+## Hardware Setup
+
+### CO2 Sensor Connections
+
+#### MHZ19 Sensor
+```
+ESP32     MHZ19
+-----     -----
+3.3V  --> VCC
+GND   --> GND
+Pin16 --> TX
+Pin17 --> RX
+```
+
+#### SenseAir S8 Sensor
+```
+ESP32     SenseAir S8
+-----     -----------
+5V    --> VCC
+GND   --> GND
+Pin16 --> TX
+Pin17 --> RX
+```
+
+### Pin Configuration
+
+The default pin configuration is defined in `src/hal/board/ttgo_t7_v14.h`:
+
+```cpp
+struct BoardPins {
+    static const int DHT_PIN = 13;
+    static const int I2C_SDA = 21;
+    static const int I2C_SCL = 22;
+    static const int ADC_SOUND = 35;
+    static const int PM_TX = 34;
+    static const int PM_RX = 14;
+    static const int CO2_TX = 16;
+    static const int CO2_RX = 17;
+};
+```
+
+## Configuration
+
+### CO2 Sensor Type Selection
+
+The firmware automatically detects the CO2 sensor type by default. You can also specify a particular sensor type:
+
+```cpp
+// Auto-detection (default)
+hal.initCO2Sensor(BoardPins::CO2_RX, BoardPins::CO2_TX, Serial2);
+
+// Force MHZ19
+hal.initCO2Sensor(BoardPins::CO2_RX, BoardPins::CO2_TX, Serial2, 
+                  CO2Sensor::SensorType::MHZ19, false);
+
+// Force SenseAir S8
+hal.initCO2Sensor(BoardPins::CO2_RX, BoardPins::CO2_TX, Serial2, 
+                  CO2Sensor::SensorType::SENSEAIR_S8, false);
+```
+
+### WiFi and MQTT Configuration
+
+Configuration is handled through the `secrets.h` file (create from template):
+
+```cpp
+// WiFi Configuration
+#define WIFI_SSID "your_wifi_ssid"
+#define WIFI_PASSWORD "your_wifi_password"
+
+// MQTT Configuration
+#define MQTT_BROKER "your_mqtt_broker"
+#define MQTT_PORT 1883
+#define MQTT_USERNAME "your_username"
+#define MQTT_PASSWORD "your_password"
+```
+
+## Build and Upload
+
+1. Install PlatformIO
+2. Clone the repository
+3. Create `secrets.h` file with your configuration
+4. Build and upload:
+
+```bash
+pio run --target upload
+```
+
+## Library Dependencies
+
+The firmware uses the following libraries:
+
+- `MH-Z19`: For MHZ19 CO2 sensors
+- `S8_UART`: For SenseAir S8 CO2 sensors
+- `ArduinoJson`: JSON handling for MQTT messages
+- `PubSubClient`: MQTT communication
+- `WiFiManager`: WiFi configuration management
+- `TaskScheduler`: Task management
+- `Sensirion I2C SHT4x`: SHT40 temperature/humidity sensor
+- `DHT sensor library`: DHT22 temperature/humidity sensor
+- `PMS Library`: Particulate matter sensor support
+
+## API Reference
+
+### CO2Sensor Class
+
+```cpp
+class CO2Sensor {
+public:
+    enum class SensorType {
+        NONE,
+        MHZ19,
+        SENSEAIR_S8
+    };
+    
+    // Initialize with auto-detection
+    bool init(int rxPin, int txPin, HardwareSerial& serial, 
+              SensorType type = SensorType::NONE, bool autoDetect = true);
+    
+    // Read sensor values
+    bool read(int& co2, int8_t& temperature);
+    bool readWithRetry(int& co2, int8_t& temperature, int maxRetries = 3, int retryDelayMs = 200);
+    
+    // Basic calibration
+    void calibrate();
+    
+    // Advanced calibration (SenseAir S8 specific)
+    bool enableAutoCalibration(bool enable = true);
+    bool setAutoCalibrationPeriod(uint16_t hours = 168);
+    bool performZeroPointCalibration();
+    bool performSpanCalibration(uint16_t concentration);
+    bool isAutoCalibrationEnabled();
+    uint16_t getAutoCalibrationPeriod();
+    
+    // Status methods
+    bool isInitialized() const;
+    SensorType getType() const;
+};
+```
+
+#### Calibration Examples
+
+```cpp
+// Enable automatic background calibration (recommended)
+co2Sensor.enableAutoCalibration(true);
+co2Sensor.setAutoCalibrationPeriod(168); // 7 days
+
+// Manual zero point calibration (outdoor air)
+// WARNING: Only use in fresh outdoor air (400 ppm)
+co2Sensor.performZeroPointCalibration();
+
+// Span calibration with reference gas
+// WARNING: Only use with known reference concentration
+co2Sensor.performSpanCalibration(2000); // 2000 ppm reference gas
+
+// Check calibration status
+bool abcEnabled = co2Sensor.isAutoCalibrationEnabled();
+uint16_t period = co2Sensor.getAutoCalibrationPeriod();
+```
+
+## License
+
+This project is licensed under the MIT License.

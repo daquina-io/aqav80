@@ -134,17 +134,32 @@ bool HAL::initTemperatureSensor(int dhtPin, int sclPin) {
     return false;
 }
 
-bool HAL::initCO2Sensor(int rxPin, int txPin, HardwareSerial& serial) {
+bool HAL::initCO2Sensor(int rxPin, int txPin, HardwareSerial& serial, 
+                       CO2Sensor::SensorType co2Type, bool autoDetect) {
     LOG_I("Initializing CO2 sensor...");
     
     for (int i = 0; i < MAX_INIT_RETRIES; i++) {
         try {
-            if (co2Sensor.init(rxPin, txPin, serial)) {
+            if (co2Sensor.init(rxPin, txPin, serial, co2Type, autoDetect)) {
                 // Test the sensor by reading values
                 int co2;
                 int8_t temp;
                 if (co2Sensor.readWithRetry(co2, temp, 5, 500)) {
-                    LOG_I("CO2 sensor initialized. Current readings: %d ppm, %d°C", co2, temp);
+                    const char* sensorTypeStr = "";
+                    switch (co2Sensor.getType()) {
+                        case CO2Sensor::SensorType::MHZ19:
+                            sensorTypeStr = "MHZ19";
+                            break;
+                        case CO2Sensor::SensorType::SENSEAIR_S8:
+                            sensorTypeStr = "SenseAir S8";
+                            break;
+                        default:
+                            sensorTypeStr = "Unknown";
+                            break;
+                    }
+                    
+                    LOG_I("CO2 sensor (%s) initialized. Current readings: %d ppm, %d°C", 
+                          sensorTypeStr, co2, temp);
                     co2SensorInitialized = true;
                     co2SensorVerified = false;
                     

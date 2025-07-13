@@ -32,7 +32,9 @@ public:
     
     // Initialize specific sensors, returns true if successful
     bool initTemperatureSensor(int dhtPin, int sclPin);
-    bool initCO2Sensor(int rxPin, int txPin, HardwareSerial& serial);
+    bool initCO2Sensor(int rxPin, int txPin, HardwareSerial& serial, 
+                       CO2Sensor::SensorType co2Type = CO2Sensor::SensorType::NONE, 
+                       bool autoDetect = true);
     bool initPMSensor(int rxPin, int txPin);
     bool initSoundSensor(int adcPin);
 
