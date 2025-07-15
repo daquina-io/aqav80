@@ -24,13 +24,22 @@ private:
     SensirionI2cSht4x sht4x;
 };
 
-// DHT implementation
-class DHTSensor : public ITemperatureSensor {
+// DHT22 implementation
+class DHT22Sensor : public ITemperatureSensor {
 public:
     bool init(int dhtPin, int unused) override;
     bool read(float& temperature, float& humidity) override;
 private:
     DHT dht{0, DHT22}; // Default initialization, pin will be set in init()
+};
+
+// DHT11 implementation
+class DHT11Sensor : public ITemperatureSensor {
+public:
+    bool init(int dhtPin, int unused) override;
+    bool read(float& temperature, float& humidity) override;
+private:
+    DHT dht{0, DHT11}; // Default initialization, pin will be set in init()
 };
 
 // Main temperature sensor class that delegates to the chosen implementation
@@ -39,7 +48,8 @@ public:
     enum class SensorType {
         NONE,
         SHT40,
-        DHT22
+        DHT22,
+        DHT11
     };
     
     TemperatureSensor();

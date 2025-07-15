@@ -35,8 +35,8 @@ bool SHT40Sensor::read(float& temperature, float& humidity) {
     return true;
 }
 
-// DHT implementation
-bool DHTSensor::init(int dhtPin, int unused) {
+// DHT22 implementation
+bool DHT22Sensor::init(int dhtPin, int unused) {
     LOG_I("Initializing DHT22 sensor on pin %d", dhtPin);
     
     if (dhtPin <= 0) {
@@ -63,14 +63,67 @@ bool DHTSensor::init(int dhtPin, int unused) {
     return true;
 }
 
-bool DHTSensor::read(float& temperature, float& humidity) {
+bool DHT22Sensor::read(float& temperature, float& humidity) {
     humidity = dht.readHumidity();
     temperature = dht.readTemperature();
     
     if (isnan(temperature) || isnan(humidity)) {
-        LOG_E("Failed to read from DHT sensor");
+        LOG_E("Failed to read from DHT22 sensor");
         return false;
     }
+    return true;
+}
+
+// DHT11 implementation
+bool DHT11Sensor::init(int dhtPin, int unused) {
+    LOG_I("Initializing DHT11 sensor on pin %d", dhtPin);
+    
+    if (dhtPin <= 0) {
+        LOG_E("Invalid pin for DHT11 sensor");
+        return false;
+    }
+    
+    dht = DHT(dhtPin, DHT11);
+    dht.begin();
+    
+    // DHT11 needs some time to stabilize (slightly longer than DHT22)
+    delay(2500);
+    
+    // Test read to verify sensor is working
+    float temp = dht.readTemperature();
+    float humidity = dht.readHumidity();
+    
+    if (isnan(temp) || isnan(humidity)) {
+        LOG_E("DHT11 sensor not responding");
+        return false;
+    }
+    
+    // DHT11 specific validation - check if values are within expected range
+    // DHT11: Temperature 0-50°C, Humidity 20-95%
+    if (temp < -40 || temp > 80 || humidity < 0 || humidity > 100) {
+        LOG_E("DHT11 sensor readings out of expected range: %.1f°C, %.1f%%", temp, humidity);
+        return false;
+    }
+    
+    LOG_I("DHT11 sensor initialized successfully");
+    return true;
+}
+
+bool DHT11Sensor::read(float& temperature, float& humidity) {
+    humidity = dht.readHumidity();
+    temperature = dht.readTemperature();
+    
+    if (isnan(temperature) || isnan(humidity)) {
+        LOG_E("Failed to read from DHT11 sensor");
+        return false;
+    }
+    
+    // DHT11 specific validation
+    if (temperature < -40 || temperature > 80 || humidity < 0 || humidity > 100) {
+        LOG_E("DHT11 sensor readings out of range: %.1f°C, %.1f%%", temperature, humidity);
+        return false;
+    }
+    
     return true;
 }
 
@@ -95,9 +148,17 @@ bool TemperatureSensor::init(int pin1, int pin2, SensorType type, bool autoDetec
     // Create and initialize the requested sensor
     switch (type) {
         case SensorType::DHT22:
-            sensor.reset(new DHTSensor());
+            sensor.reset(new DHT22Sensor());
             if (!sensor->init(pin1, 0)) {
                 LOG_E("Failed to initialize DHT22 sensor");
+                return false;
+            }
+            break;
+            
+        case SensorType::DHT11:
+            sensor.reset(new DHT11Sensor());
+            if (!sensor->init(pin1, 0)) {
+                LOG_E("Failed to initialize DHT11 sensor");
                 return false;
             }
             break;
@@ -129,11 +190,19 @@ bool TemperatureSensor::autoDetectSensor(int pin1, int pin2) {
         return true;
     }
     
-    // If SHT40 fails, try DHT22
-    sensor.reset(new DHTSensor());
+    // If SHT40 fails, try DHT22 (more capable than DHT11)
+    sensor.reset(new DHT22Sensor());
     if (sensor->init(pin1, 0)) {
         LOG_I("Detected DHT22 sensor");
         currentType = SensorType::DHT22;
+        return true;
+    }
+    
+    // If DHT22 fails, try DHT11
+    sensor.reset(new DHT11Sensor());
+    if (sensor->init(pin1, 0)) {
+        LOG_I("Detected DHT11 sensor");
+        currentType = SensorType::DHT11;
         return true;
     }
     
